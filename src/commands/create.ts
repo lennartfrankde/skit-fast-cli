@@ -148,23 +148,56 @@ async function createSvelteKitProject(options: ProjectOptions): Promise<void> {
     // Create SvelteKit project with sv create
     console.log(chalk.blue('Creating SvelteKit project with sv create...'));
     
-    // Use sv create to create the project (assumes sv is installed globally)
-    const svCommand = `npx sv create ${options.projectName}`;
+    // Check if the directory already exists
+    if (await fs.pathExists(options.projectName)) {
+      throw new Error(`Directory ${options.projectName} already exists`);
+    }
     
-    // For automation, we'll need to handle the interactive prompts
-    // This is a simplified version - in reality, sv create is interactive
-    console.log(chalk.yellow('Note: sv create will prompt for options. Please select:'));
-    console.log(chalk.yellow('- TypeScript: Yes'));
-    console.log(chalk.yellow('- ESLint: Yes'));
-    console.log(chalk.yellow('- Prettier: Yes'));
-    console.log(chalk.yellow('- Tailwind CSS: Yes (with all features)'));
+    // For automation, we'll provide instructions and create a basic SvelteKit project structure
+    // Since sv create is interactive, we'll provide clear instructions to the user
+    console.log(chalk.yellow('\n📋 Please run the following command and select these options:'));
+    console.log(chalk.cyan(`npx sv create ${options.projectName}`));
+    console.log(chalk.yellow('\nWhen prompted, please select:'));
+    console.log(chalk.yellow('- Which Svelte app template? → SvelteKit minimal'));
+    console.log(chalk.yellow('- Add type checking with TypeScript? → Yes, using TypeScript syntax'));
+    console.log(chalk.yellow('- Select additional options:'));
+    console.log(chalk.yellow('  ✓ Add ESLint for code linting'));
+    console.log(chalk.yellow('  ✓ Add Prettier for code formatting'));
+    console.log(chalk.yellow('  ✓ Add Tailwind CSS for styling'));
+    console.log(chalk.yellow('  ✓ Add Playwright for browser testing (optional)'));
+    console.log(chalk.yellow('  ✓ Add Vitest for unit testing (optional)'));
     
-    await executeCommandAsync('npx', ['sv', 'create', options.projectName], {});
+    // Wait for user confirmation
+    const { proceed } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'proceed',
+      message: 'Have you created the SvelteKit project with the options above?',
+      default: false
+    }]);
     
-    console.log(chalk.green(`✓ SvelteKit project created: ${options.projectName}`));
+    if (!proceed) {
+      throw new Error('SvelteKit project creation cancelled');
+    }
+    
+    // Verify the project was created
+    if (!await fs.pathExists(options.projectName)) {
+      throw new Error(`Project directory ${options.projectName} not found. Please create the SvelteKit project first.`);
+    }
+    
+    // Verify it's a SvelteKit project
+    const packageJsonPath = path.join(options.projectName, 'package.json');
+    if (!await fs.pathExists(packageJsonPath)) {
+      throw new Error('Invalid SvelteKit project: package.json not found');
+    }
+    
+    const packageJson = await fs.readJson(packageJsonPath);
+    if (!packageJson.devDependencies || !packageJson.devDependencies['@sveltejs/kit']) {
+      throw new Error('Invalid SvelteKit project: @sveltejs/kit not found in devDependencies');
+    }
+    
+    console.log(chalk.green(`✓ SvelteKit project verified: ${options.projectName}`));
   } catch (error: any) {
-    console.error(chalk.red('Failed to create SvelteKit project'));
-    console.error(chalk.red('Make sure you have sv installed: npm install -g @sveltejs/cli'));
+    console.error(chalk.red('Failed to create SvelteKit project:'), error.message);
     throw error;
   }
 }
@@ -180,52 +213,112 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
     const coolify = new CoolifyClient(options.coolifyUrl, options.coolifyApiToken);
     
     // Test connection
+    console.log(chalk.blue('Testing Coolify connection...'));
     const connected = await coolify.testConnection();
     if (!connected) {
-      throw new Error('Failed to connect to Coolify');
+      throw new Error('Failed to connect to Coolify API. Please check your URL and API token.');
     }
+    console.log(chalk.green('✓ Connected to Coolify'));
     
     // Create project
+    console.log(chalk.blue('Creating Coolify project...'));
     const project = await coolify.createProject(options.projectName);
     
     // Create SvelteKit service
     if (options.registryTag) {
+      console.log(chalk.blue('Creating SvelteKit application service...'));
       await coolify.createSvelteKitService(project.id, 'app', options.registryTag);
     }
     
     // Create database service
     if (options.database === 'pocketbase') {
+      console.log(chalk.blue('Creating PocketBase service...'));
       await coolify.createPocketBaseService(project.id);
+    } else if (options.database === 'mongodb') {
+      console.log(chalk.yellow('MongoDB service creation not implemented yet. Please add manually in Coolify.'));
     }
     
     // Create Redis service if requested
     if (options.useRedis) {
+      console.log(chalk.blue('Creating Redis service...'));
       await coolify.createRedisService(project.id);
     }
     
     // Create additional services
     if (options.services.includes('litellm')) {
+      console.log(chalk.blue('Creating LiteLLM service...'));
       await coolify.createLiteLLMService(project.id);
     }
     
+    if (options.services.includes('qdrant')) {
+      console.log(chalk.yellow('Qdrant service creation not implemented yet. Please add manually in Coolify.'));
+    }
+    
     // Get environment variables and create .env file
+    console.log(chalk.blue('Retrieving environment variables...'));
     const envVars = await coolify.getEnvironmentVariables(project.id);
-    await createEnvironmentFile(options.projectName, envVars);
+    await createEnvironmentFile(options.projectName, envVars, options.coolifyUrl);
+    
+    console.log(chalk.green('✅ Coolify deployment setup completed!'));
+    console.log(chalk.cyan(`🌐 Project URL: ${options.coolifyUrl}/projects/${project.id}`));
     
   } catch (error: any) {
     console.error(chalk.red('Failed to set up Coolify deployment:'), error.message);
-    console.log(chalk.yellow('You can set up Coolify manually later.'));
+    console.log(chalk.yellow('You can set up Coolify deployment manually later.'));
+    console.log(chalk.yellow('The project files will still be generated with Docker support.'));
+    
+    // Don't throw the error - continue with local project setup
   }
 }
 
-async function createEnvironmentFile(projectName: string, envVars: Record<string, string>): Promise<void> {
+async function createEnvironmentFile(projectName: string, envVars: Record<string, string>, coolifyUrl?: string): Promise<void> {
   const envPath = path.join(process.cwd(), projectName, '.env');
-  const envContent = Object.entries(envVars)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('\n');
+  
+  // Create base environment variables with sensible defaults
+  const baseEnvVars: Record<string, string> = {
+    NODE_ENV: 'development',
+    PORT: '3000',
+    ...envVars
+  };
+  
+  // Add Coolify-specific environment variables if URL is provided
+  if (coolifyUrl) {
+    baseEnvVars.COOLIFY_URL = coolifyUrl;
+  }
+  
+  const envContent = [
+    '# Environment Variables',
+    '# Generated by skit-fast-cli',
+    '',
+    '# Application',
+    ...Object.entries(baseEnvVars)
+      .filter(([key]) => ['NODE_ENV', 'PORT'].includes(key))
+      .map(([key, value]) => `${key}=${value}`),
+    '',
+    '# Database',
+    '# DATABASE_URL=your_database_url_here',
+    '',
+    '# Redis (if enabled)',
+    '# REDIS_URL=redis://localhost:6379',
+    '',
+    '# Coolify Environment Variables'
+  ];
+  
+  // Add Coolify environment variables
+  Object.entries(baseEnvVars)
+    .filter(([key]) => !['NODE_ENV', 'PORT'].includes(key))
+    .forEach(([key, value]) => {
+      envContent.push(`${key}=${value}`);
+    });
+  
+  // Add example variables if no Coolify vars are available
+  if (Object.keys(envVars).length === 0) {
+    envContent.push('# Add your environment variables here');
+    envContent.push('# EXAMPLE_VAR=example_value');
+  }
     
-  await fs.writeFile(envPath, envContent);
-  console.log(chalk.green(`✓ Created .env file with ${Object.keys(envVars).length} variables`));
+  await fs.writeFile(envPath, envContent.join('\n'));
+  console.log(chalk.green(`✓ Created .env file with ${Object.keys(baseEnvVars).length} variables`));
 }
 
 async function generateProjectFiles(options: ProjectOptions): Promise<void> {
@@ -233,17 +326,157 @@ async function generateProjectFiles(options: ProjectOptions): Promise<void> {
   
   const projectPath = path.join(process.cwd(), options.projectName);
   
-  // Create Dockerfile
-  await createDockerfile(projectPath, options);
+  // Ensure project directory exists
+  if (!await fs.pathExists(projectPath)) {
+    throw new Error(`Project directory ${projectPath} does not exist`);
+  }
   
-  // Create docker-compose.yml for development
-  await createDockerCompose(projectPath, options);
+  try {
+    // Create Dockerfile
+    await createDockerfile(projectPath, options);
+    
+    // Create docker-compose.yml for development
+    await createDockerCompose(projectPath, options);
+    
+    // Create deployment scripts
+    await createDeploymentScripts(projectPath, options);
+    
+    // Create GitHub Actions (disabled by default)
+    await createGitHubActions(projectPath, options);
+    
+    // Copy and generate additional project files
+    await copyProjectTemplates(projectPath, options);
+    
+    console.log(chalk.green('✅ All project files generated successfully!'));
+  } catch (error: any) {
+    console.error(chalk.red('Error generating project files:'), error.message);
+    throw error;
+  }
+}
+
+async function copyProjectTemplates(projectPath: string, options: ProjectOptions): Promise<void> {
+  const templatesDir = path.join(__dirname, '..', 'templates');
   
-  // Create deployment scripts
-  await createDeploymentScripts(projectPath, options);
+  try {
+    // Copy .gitignore if it doesn't exist
+    const gitignorePath = path.join(projectPath, '.gitignore');
+    if (!await fs.pathExists(gitignorePath)) {
+      const templateGitignore = path.join(templatesDir, '.gitignore');
+      if (await fs.pathExists(templateGitignore)) {
+        await fs.copy(templateGitignore, gitignorePath);
+        console.log(chalk.green('✓ Created .gitignore'));
+      }
+    }
+    
+    // Copy LiteLLM config if LiteLLM is selected
+    if (options.services.includes('litellm')) {
+      const litellmConfigPath = path.join(projectPath, 'litellm-config.yaml');
+      const templateLitellmConfig = path.join(templatesDir, 'litellm-config.yaml');
+      if (await fs.pathExists(templateLitellmConfig)) {
+        await fs.copy(templateLitellmConfig, litellmConfigPath);
+        console.log(chalk.green('✓ Created litellm-config.yaml'));
+      }
+    }
+    
+    // Copy Redis compose if Redis is selected
+    if (options.useRedis) {
+      const redisComposePath = path.join(projectPath, 'redis-compose.yml');
+      const templateRedisCompose = path.join(templatesDir, 'redis-compose.yml');
+      if (await fs.pathExists(templateRedisCompose)) {
+        await fs.copy(templateRedisCompose, redisComposePath);
+        console.log(chalk.green('✓ Created redis-compose.yml'));
+      }
+    }
+    
+    // Generate README.md with project-specific content
+    await createProjectReadme(projectPath, options);
+    
+  } catch (error: any) {
+    console.log(chalk.yellow('Warning: Could not copy all template files:'), error.message);
+  }
+}
+
+async function createProjectReadme(projectPath: string, options: ProjectOptions): Promise<void> {
+  const readmePath = path.join(projectPath, 'README.md');
   
-  // Create GitHub Actions (disabled by default)
-  await createGitHubActions(projectPath, options);
+  const readmeContent = `# ${options.projectName}
+
+A fast SvelteKit project created with skit-fast-cli.
+
+## Features
+
+- ⚡ SvelteKit with TypeScript
+- 🎨 Tailwind CSS with all features enabled
+- 📝 ESLint and Prettier configured
+- 🐳 Docker ready${options.useCoolify ? '\n- 🚀 Coolify deployment configured' : ''}${options.database ? `\n- 🗄️ ${options.database.charAt(0).toUpperCase() + options.database.slice(1)} database integration` : ''}${options.useRedis ? '\n- 🔴 Redis cache integration' : ''}
+
+## Development
+
+\`\`\`bash
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+
+# Build for production
+npm run build
+\`\`\`
+
+## Docker
+
+\`\`\`bash
+# Build Docker image
+npm run docker:build
+
+# Run with docker-compose
+docker-compose up
+\`\`\`
+${options.useCoolify ? `
+## Deployment
+
+### Production
+\`\`\`bash
+npm run deploy:prod
+\`\`\`
+
+### Development
+\`\`\`bash
+npm run deploy:dev
+\`\`\`
+
+### Environment Variables
+
+Set the following environment variables for deployment:
+- \`COOLIFY_WEBHOOK_URL\` - Webhook URL for production deployment
+- \`COOLIFY_DEV_WEBHOOK_URL\` - Webhook URL for development deployment
+` : ''}
+## Services
+${options.database ? `
+- **Database**: ${options.database}` : ''}${options.useRedis ? `
+- **Cache**: Redis` : ''}${options.services.length > 0 ? `
+${options.services.map(service => `- **${service}**: Additional service`).join('\n')}` : ''}
+
+## GitHub Actions
+
+GitHub Actions workflows are included but disabled by default. To enable:
+
+1. Set up repository secrets:
+   - \`DOCKER_REGISTRY\`
+   - \`DOCKER_USERNAME\` 
+   - \`DOCKER_PASSWORD\`${options.useCoolify ? `
+   - \`COOLIFY_WEBHOOK_URL\`
+   - \`COOLIFY_DEV_WEBHOOK_URL\`` : ''}
+
+2. Edit \`.github/workflows/*.yml\` and change \`if: false\` to \`if: true\`
+
+## License
+
+MIT
+`;
+
+  await fs.writeFile(readmePath, readmeContent);
+  console.log(chalk.green('✓ Created README.md'));
 }
 
 async function createDockerfile(projectPath: string, options: ProjectOptions): Promise<void> {
