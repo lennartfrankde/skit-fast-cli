@@ -243,27 +243,11 @@ export class CoolifyClient {
     try {
       console.log(chalk.blue(`Creating SvelteKit service with image: ${dockerImage}`));
       
-      // Simplified new format payload (more compatible)
-      const newFormatPayload = {
+      const payload = {
         name: serviceName,
         description: `SvelteKit application service`,
-        image: dockerImage,
-        ports_exposes: '3000',
-        type: 'docker',
-        environment_variables: {
-          NODE_ENV: 'production',
-          PORT: '3000',
-          HOST: '0.0.0.0'
-        }
-      };
-
-      // Simplified legacy format payload (more compatible)
-      const legacyFormatPayload = {
-        name: serviceName,
         docker_image: dockerImage,
         ports_exposes: '3000',
-        description: `SvelteKit application service`,
-        type: 'docker',
         environment_variables: [
           { key: 'NODE_ENV', value: 'production' },
           { key: 'PORT', value: '3000' },
@@ -271,9 +255,11 @@ export class CoolifyClient {
         ]
       };
 
-      const result = await this.createServiceWithFallback(projectId, serviceName, newFormatPayload, legacyFormatPayload);
+      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications/dockerimage`));
+      const response = await this.client.post(`/api/v1/projects/${projectId}/applications/dockerimage`, payload);
+      
       console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName}`));
-      return result;
+      return response.data;
     } catch (error: any) {
       console.error(chalk.red(`Failed to create SvelteKit service: ${serviceName}`));
       
@@ -450,12 +436,12 @@ export class CoolifyClient {
       const payload = {
         name: 'qdrant',
         description: 'Qdrant vector database service',
-        docker_image: 'qdrant/qdrant:latest',
+        image: 'qdrant/qdrant:latest',
         ports_exposes: '6333',
-        environment_variables: [
-          { key: 'QDRANT__SERVICE__HTTP_PORT', value: '6333' },
-          { key: 'QDRANT__SERVICE__GRPC_PORT', value: '6334' }
-        ],
+        environment_variables: {
+          QDRANT__SERVICE__HTTP_PORT: '6333',
+          QDRANT__SERVICE__GRPC_PORT: '6334'
+        },
         volumes: [
           {
             name: 'qdrant_storage',
@@ -466,8 +452,8 @@ export class CoolifyClient {
         restart_policy: 'unless-stopped'
       };
 
-      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications/dockerimage`));
-      const response = await this.client.post(`/api/v1/projects/${projectId}/applications/dockerimage`, payload);
+      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/services`));
+      const response = await this.client.post(`/api/v1/projects/${projectId}/services`, payload);
       
       console.log(chalk.green(`✓ Created Qdrant vector database service`));
       return response.data;
