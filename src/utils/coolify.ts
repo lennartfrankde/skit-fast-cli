@@ -243,27 +243,11 @@ export class CoolifyClient {
     try {
       console.log(chalk.blue(`Creating SvelteKit service with image: ${dockerImage}`));
       
-      // Simplified new format payload (more compatible)
-      const newFormatPayload = {
+      const payload = {
         name: serviceName,
         description: `SvelteKit application service`,
-        image: dockerImage,
-        ports_exposes: '3000',
-        type: 'docker',
-        environment_variables: {
-          NODE_ENV: 'production',
-          PORT: '3000',
-          HOST: '0.0.0.0'
-        }
-      };
-
-      // Simplified legacy format payload (more compatible)
-      const legacyFormatPayload = {
-        name: serviceName,
         docker_image: dockerImage,
         ports_exposes: '3000',
-        description: `SvelteKit application service`,
-        type: 'docker',
         environment_variables: [
           { key: 'NODE_ENV', value: 'production' },
           { key: 'PORT', value: '3000' },
@@ -271,9 +255,11 @@ export class CoolifyClient {
         ]
       };
 
-      const result = await this.createServiceWithFallback(projectId, serviceName, newFormatPayload, legacyFormatPayload);
+      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications/dockerimage`));
+      const response = await this.client.post(`/api/v1/projects/${projectId}/applications/dockerimage`, payload);
+      
       console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName}`));
-      return result;
+      return response.data;
     } catch (error: any) {
       console.error(chalk.red(`Failed to create SvelteKit service: ${serviceName}`));
       
@@ -452,7 +438,6 @@ export class CoolifyClient {
         description: 'Qdrant vector database service',
         image: 'qdrant/qdrant:latest',
         ports_exposes: '6333',
-        is_container_based_service: true,
         environment_variables: {
           QDRANT__SERVICE__HTTP_PORT: '6333',
           QDRANT__SERVICE__GRPC_PORT: '6334'
@@ -491,14 +476,13 @@ export class CoolifyClient {
       const payload = {
         name: 'mongodb',
         description: 'MongoDB database service',
-        image: 'mongo:latest',
+        docker_image: 'mongo:latest',
         ports_exposes: '27017',
-        is_container_based_service: true,
-        environment_variables: {
-          MONGO_INITDB_ROOT_USERNAME: 'admin',
-          MONGO_INITDB_ROOT_PASSWORD: 'admin123',
-          MONGO_INITDB_DATABASE: 'app'
-        },
+        environment_variables: [
+          { key: 'MONGO_INITDB_ROOT_USERNAME', value: 'admin' },
+          { key: 'MONGO_INITDB_ROOT_PASSWORD', value: 'admin123' },
+          { key: 'MONGO_INITDB_DATABASE', value: 'app' }
+        ],
         volumes: [
           {
             name: 'mongodb_data',
@@ -509,8 +493,8 @@ export class CoolifyClient {
         restart_policy: 'unless-stopped'
       };
 
-      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/services`));
-      const response = await this.client.post(`/api/v1/projects/${projectId}/services`, payload);
+      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/databases/mongodb`));
+      const response = await this.client.post(`/api/v1/projects/${projectId}/databases/mongodb`, payload);
       
       console.log(chalk.green(`✓ Created MongoDB service`));
       return response.data;
