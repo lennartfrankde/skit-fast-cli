@@ -126,7 +126,17 @@ export class CoolifyClient {
   private async createServiceWithFallback(projectId: string, serviceName: string, newFormatPayload: any, legacyFormatPayload: any): Promise<CoolifyService> {
     // Try multiple API endpoint patterns based on different Coolify versions
     // Updated endpoints based on current Coolify API structure
+    const dockerImagePayload = {
+      name: serviceName,
+      project_uuid: projectId,
+      docker_image: newFormatPayload.image || `${legacyFormatPayload.docker_registry_image_name}:${legacyFormatPayload.docker_registry_image_tag}`,
+      ...(legacyFormatPayload.ports_exposes && { ports_exposes: legacyFormatPayload.ports_exposes }),
+      ...(legacyFormatPayload.environment_variables && { environment_variables: legacyFormatPayload.environment_variables }),
+      ...(legacyFormatPayload.description && { description: legacyFormatPayload.description })
+    };
+    
     const endpointsToTry = [
+      { url: `/api/v1/applications/dockerimage`, payload: dockerImagePayload, name: 'docker image applications endpoint' },
       { url: `/api/v1/applications`, payload: { ...legacyFormatPayload, project_uuid: projectId }, name: 'direct applications endpoint' },
       { url: `/api/v1/projects/${projectId}/applications`, payload: legacyFormatPayload, name: 'project applications endpoint' },
       { url: `/api/v1/services`, payload: { ...newFormatPayload, project_id: projectId }, name: 'direct services endpoint' },
