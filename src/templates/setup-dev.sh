@@ -8,6 +8,13 @@ echo "🚀 Setting up local development environment..."
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then
     echo "❌ Docker is not installed. Please install Docker to run local services."
+    echo "   Download from: https://www.docker.com/products/docker-desktop"
+    exit 1
+fi
+
+# Check if Docker is running
+if ! docker info &> /dev/null; then
+    echo "❌ Docker is not running. Please start Docker and try again."
     exit 1
 fi
 
@@ -17,17 +24,24 @@ if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/
     exit 1
 fi
 
+# Install dependencies if not already done
+if [ ! -d "node_modules" ]; then
+    echo "📦 Installing npm dependencies..."
+    npm install
+fi
+
 # Start local services
 echo "📦 Starting local services..."
 npm run services:start
 
 # Wait a moment for services to start
-sleep 5
+echo "⏳ Waiting for services to initialize..."
+sleep 8
 
 echo "✅ Local development environment is ready!"
 echo ""
 echo "🌐 Available services:"
-echo "   • SvelteKit app: http://localhost:3000 (run 'npm run dev')"
+echo "   • SvelteKit app: http://localhost:5173 (run 'npm run dev')"
 echo "   • PocketBase: http://localhost:8090 (if selected)"
 echo "   • MongoDB: localhost:27017 (if selected)"
 echo "   • Redis: localhost:6379 (if selected)"
@@ -36,7 +50,10 @@ echo "   • Qdrant: http://localhost:6333 (if selected)"
 echo ""
 echo "📋 Next steps:"
 echo "   1. Run 'npm run dev' to start the SvelteKit development server"
-echo "   2. Open http://localhost:3000 in your browser"
+echo "   2. Open http://localhost:5173 in your browser"
 echo "   3. Run 'npm run services:stop' when done developing"
 echo ""
-echo "🔍 View service logs: npm run services:logs"
+echo "🔍 Additional commands:"
+echo "   • View service logs: npm run services:logs"
+echo "   • Stop all services: npm run dev:teardown"
+echo "   • Check .env file for connection details"

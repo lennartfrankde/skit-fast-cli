@@ -27,10 +27,45 @@ export class CoolifyClient {
     });
   }
 
+  /**
+   * Helper method to create services with fallback for different API versions
+   */
+  private async createServiceWithFallback(projectId: string, serviceName: string, newFormatPayload: any, legacyFormatPayload: any): Promise<CoolifyService> {
+    try {
+      // Try the new API format first
+      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/services`));
+      const response = await this.client.post(`/api/v1/projects/${projectId}/services`, newFormatPayload);
+      return response.data;
+    } catch (newFormatError: any) {
+      console.log(chalk.yellow(`New format failed, trying legacy format...`));
+      
+      // Fallback to legacy format
+      try {
+        console.log(chalk.gray(`Fallback API Request: POST /api/v1/projects/${projectId}/applications`));
+        const legacyResponse = await this.client.post(`/api/v1/projects/${projectId}/applications`, legacyFormatPayload);
+        return legacyResponse.data;
+      } catch (legacyError: any) {
+        console.error(chalk.red(`Both new and legacy formats failed for service: ${serviceName}`));
+        console.error(chalk.red(`New format error: ${newFormatError.response?.data?.message || newFormatError.message}`));
+        console.error(chalk.red(`Legacy format error: ${legacyError.response?.data?.message || legacyError.message}`));
+        throw legacyError;
+      }
+    }
+  }
+
   async testConnection(): Promise<boolean> {
     try {
       console.log(chalk.blue(`Testing connection to: ${this.client.defaults.baseURL}/api/v1/teams`));
       const response = await this.client.get('/api/v1/teams');
+      
+      // Try to get version information
+      try {
+        const versionResponse = await this.client.get('/api/v1/version');
+        console.log(chalk.green(`✓ Connected to Coolify ${versionResponse.data?.version || 'unknown version'}`));
+      } catch (versionError) {
+        console.log(chalk.green(`✓ Connected to Coolify (version info not available)`));
+      }
+      
       return true;
     } catch (error: any) {
       console.error(chalk.red('Failed to connect to Coolify API'));
@@ -104,7 +139,8 @@ export class CoolifyClient {
     try {
       console.log(chalk.blue(`Creating SvelteKit service with image: ${dockerImage}`));
       
-      const payload = {
+      // New API format payload
+      const newFormatPayload = {
         name: serviceName,
         description: `SvelteKit application service`,
         image: dockerImage,
@@ -126,13 +162,30 @@ export class CoolifyClient {
         restart_policy: 'unless-stopped'
       };
 
-      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/services`));
-      console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
-      
-      const response = await this.client.post(`/api/v1/projects/${projectId}/services`, payload);
-      
+      // Legacy API format payload
+      const legacyFormatPayload = {
+        name: serviceName,
+        docker_image: dockerImage,
+        ports_exposes: '3000',
+        build_pack: 'dockerfile',
+        environment_variables: [
+          { key: 'NODE_ENV', value: 'production' },
+          { key: 'PORT', value: '3000' },
+          { key: 'HOST', value: '0.0.0.0' }
+        ],
+        health_check_enabled: true,
+        health_check_path: '/health',
+        health_check_port: '3000',
+        health_check_interval: 30,
+        health_check_timeout: 10,
+        health_check_retries: 3,
+        auto_deploy: true,
+        auto_deploy_webhook: true
+      };
+
+      const result = await this.createServiceWithFallback(projectId, serviceName, newFormatPayload, legacyFormatPayload);
       console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName}`));
-      return response.data;
+      return result;
     } catch (error: any) {
       console.error(chalk.red(`Failed to create SvelteKit service: ${serviceName}`));
       
@@ -145,6 +198,10 @@ export class CoolifyClient {
           console.log(chalk.yellow('   - Service name may already exist in the project'));
           console.log(chalk.yellow('   - Docker image URL may be invalid or inaccessible'));
           console.log(chalk.yellow('   - Required fields may be missing in the request'));
+        } else if (error.response.status === 404) {
+          console.log(chalk.yellow('\n💡 API endpoint not found. This might indicate:'));
+          console.log(chalk.yellow('   - Your Coolify instance may be using a different API version'));
+          console.log(chalk.yellow('   - The project ID may be incorrect'));
         }
       } else {
         console.error(chalk.red(`Request error: ${error.message}`));
