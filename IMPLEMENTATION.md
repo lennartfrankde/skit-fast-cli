@@ -8,6 +8,7 @@ A comprehensive CLI tool that creates SvelteKit projects with modern tooling and
 ### ✅ Core CLI Features
 - **Interactive Project Creation**: Step-by-step guidance through project setup
 - **SvelteKit Integration**: Guided creation with `sv create` and proper option selection
+- **Tauri Integration**: Optional desktop and mobile app development with platform selection
 - **TypeScript Support**: Full TypeScript implementation with proper type definitions
 - **Modern Tooling**: Automatic selection of ESLint, Prettier, and Tailwind CSS
 
@@ -108,8 +109,12 @@ skit-fast create
 3. **Database Selection**: PocketBase or MongoDB
 4. **Redis Cache**: Optional Redis integration
 5. **Additional Services**: LiteLLM, Qdrant selection
-6. **Docker Registry**: Configuration for deployment
-7. **File Generation**: All project files and configurations
+6. **Tauri Integration**: Optional desktop/mobile app development
+   - Platform selection: Desktop, Android, iOS
+   - Automatic dependency installation
+   - Configuration file generation
+7. **Docker Registry**: Configuration for deployment
+8. **File Generation**: All project files and configurations
 
 ## Technical Implementation
 
@@ -131,6 +136,7 @@ skit-fast create
 
 ✅ **CLI Tool Creation**: Complete interactive command-line interface  
 ✅ **SvelteKit Project**: Integration with `sv create` and modern tooling  
+✅ **Tauri Integration**: Optional desktop and mobile app development with platform selection
 ✅ **Tool Selection**: TypeScript, ESLint, Prettier, Tailwind CSS  
 ✅ **Coolify Integration**: Full API integration with project/service creation  
 ✅ **Database Options**: PocketBase and MongoDB support  

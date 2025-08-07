@@ -8,6 +8,8 @@ export interface ProjectOptions {
   services: string[];
   dockerRegistry?: string;
   registryTag?: string;
+  useTauri: boolean;
+  tauriPlatforms: string[];
 }
 
 export interface CoolifyProject {

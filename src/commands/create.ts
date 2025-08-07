@@ -18,6 +18,11 @@ export async function createProject(): Promise<void> {
   // Create SvelteKit project
   await createSvelteKitProject(options);
   
+  // Set up Tauri if requested
+  if (options.useTauri) {
+    await setupTauriIntegration(options);
+  }
+  
   // Set up Coolify deployment if requested
   if (options.useCoolify) {
     await setupCoolifyDeployment(options);
@@ -32,16 +37,25 @@ export async function createProject(): Promise<void> {
   console.log(chalk.cyan('  2. npm install'));
   console.log(chalk.cyan('  3. npm run dev'));
   
+  if (options.useTauri) {
+    console.log(chalk.cyan('  4. npm run tauri dev # to run the desktop app'));
+    if (options.tauriPlatforms.includes('android')) {
+      console.log(chalk.cyan('  5. npm run tauri android dev # to run on Android'));
+    }
+  }
+  
   if (options.useCoolify) {
-    console.log(chalk.cyan('  4. npm run deploy:prod # to deploy to production'));
-    console.log(chalk.cyan('  5. npm run deploy:dev # to deploy to development'));
+    const step = options.useTauri ? '6' : '4';
+    console.log(chalk.cyan(`  ${step}. npm run deploy:prod # to deploy to production`));
+    console.log(chalk.cyan(`  ${parseInt(step) + 1}. npm run deploy:dev # to deploy to development`));
   }
 }
 
 async function getProjectOptions(): Promise<ProjectOptions> {
   const currentDir = getCurrentDirectoryName();
   
-  const answers = await inquirer.prompt([
+  // Get basic project options first
+  const basicAnswers = await inquirer.prompt([
     {
       type: 'input',
       name: 'projectName',
@@ -62,36 +76,69 @@ async function getProjectOptions(): Promise<ProjectOptions> {
       name: 'useCoolify',
       message: 'Do you want to set up Coolify deployment?',
       default: false
-    },
-    {
-      type: 'input',
-      name: 'coolifyUrl',
-      message: 'Coolify URL:',
-      when: (answers) => answers.useCoolify,
-      validate: (input: string) => {
-        if (!input.trim()) {
-          return 'Coolify URL is required';
+    }
+  ]);
+  
+  // Get Coolify-specific options if needed
+  let coolifyAnswers: any = {};
+  if (basicAnswers.useCoolify) {
+    coolifyAnswers = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'coolifyUrl',
+        message: 'Coolify URL:',
+        validate: (input: string) => {
+          if (!input.trim()) {
+            return 'Coolify URL is required';
+          }
+          try {
+            new URL(input);
+            return true;
+          } catch {
+            return 'Please enter a valid URL';
+          }
         }
-        try {
-          new URL(input);
+      },
+      {
+        type: 'password',
+        name: 'coolifyApiToken',
+        message: 'Coolify API Token:',
+        validate: (input: string) => {
+          if (!input.trim()) {
+            return 'API token is required';
+          }
           return true;
-        } catch {
-          return 'Please enter a valid URL';
         }
+      },
+      {
+        type: 'input',
+        name: 'dockerRegistry',
+        message: 'Docker registry (optional):',
+        default: 'ghcr.io'
       }
-    },
-    {
-      type: 'password',
-      name: 'coolifyApiToken',
-      message: 'Coolify API Token:',
-      when: (answers) => answers.useCoolify,
-      validate: (input: string) => {
-        if (!input.trim()) {
-          return 'API token is required';
+    ]);
+    
+    if (coolifyAnswers.dockerRegistry) {
+      const registryAnswer = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'registryTag',
+          message: 'Docker registry tag:',
+          default: `${coolifyAnswers.dockerRegistry}/${basicAnswers.projectName}:latest`,
+          validate: (input: string) => {
+            if (!input.trim()) {
+              return 'Registry tag is required';
+            }
+            return true;
+          }
         }
-        return true;
-      }
-    },
+      ]);
+      coolifyAnswers.registryTag = registryAnswer.registryTag;
+    }
+  }
+  
+  // Get database and service options
+  const serviceAnswers = await inquirer.prompt([
     {
       type: 'list',
       name: 'database',
@@ -117,30 +164,167 @@ async function getProjectOptions(): Promise<ProjectOptions> {
         { name: 'Qdrant (Vector Database)', value: 'qdrant' }
       ],
       default: []
-    },
-    {
-      type: 'input',
-      name: 'dockerRegistry',
-      message: 'Docker registry (optional):',
-      when: (answers) => answers.useCoolify,
-      default: 'ghcr.io'
-    },
-    {
-      type: 'input',
-      name: 'registryTag',
-      message: 'Docker registry tag:',
-      when: (answers) => answers.useCoolify && answers.dockerRegistry,
-      default: (answers) => `${answers.dockerRegistry}/${answers.projectName}:latest`,
-      validate: (input: string) => {
-        if (!input.trim()) {
-          return 'Registry tag is required';
-        }
-        return true;
-      }
     }
   ]);
+  
+  // Get Tauri options
+  const tauriAnswers = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'useTauri',
+      message: 'Do you want to add Tauri for desktop/mobile app development?',
+      default: false
+    }
+  ]);
+  
+  let tauriPlatforms: string[] = [];
+  if (tauriAnswers.useTauri) {
+    const platformAnswers = await inquirer.prompt([
+      {
+        type: 'checkbox',
+        name: 'tauriPlatforms',
+        message: 'Select target platforms for Tauri:',
+        choices: [
+          { name: 'Desktop (Windows, macOS, Linux)', value: 'desktop' },
+          { name: 'Android', value: 'android' },
+          { name: 'iOS', value: 'ios' }
+        ],
+        default: ['desktop'],
+        validate: (input: string[]) => {
+          if (input.length === 0) {
+            return 'Please select at least one platform';
+          }
+          return true;
+        }
+      }
+    ] as any);
+    tauriPlatforms = platformAnswers.tauriPlatforms;
+  }
 
-  return answers as ProjectOptions;
+  return {
+    ...basicAnswers,
+    ...coolifyAnswers,
+    ...serviceAnswers,
+    useTauri: tauriAnswers.useTauri,
+    tauriPlatforms
+  } as ProjectOptions;
+}
+
+async function setupTauriIntegration(options: ProjectOptions): Promise<void> {
+  console.log(chalk.blue('Setting up Tauri integration...'));
+  
+  const projectPath = path.join(process.cwd(), options.projectName);
+  
+  try {
+    // Navigate to project directory for Tauri commands
+    process.chdir(projectPath);
+    
+    // Install Tauri CLI and dependencies
+    console.log(chalk.blue('Installing Tauri dependencies...'));
+    await executeCommand('npm install --save-dev @tauri-apps/cli');
+    await executeCommand('npm install @tauri-apps/api');
+    
+    // Initialize Tauri
+    console.log(chalk.blue('Initializing Tauri...'));
+    await executeCommand('npx tauri init --yes');
+    
+    // Set up Android if selected
+    if (options.tauriPlatforms.includes('android')) {
+      console.log(chalk.blue('Setting up Android platform...'));
+      try {
+        await executeCommand('npx tauri android init');
+        console.log(chalk.green('✓ Android platform initialized'));
+      } catch (error: any) {
+        console.log(chalk.yellow('⚠️ Android setup requires additional dependencies. Please run:'));
+        console.log(chalk.yellow('  npx tauri android init'));
+        console.log(chalk.yellow('after installing Android Studio and NDK.'));
+      }
+    }
+    
+    // Note about iOS setup (requires macOS)
+    if (options.tauriPlatforms.includes('ios')) {
+      console.log(chalk.yellow('⚠️ iOS setup requires macOS and Xcode. Please run:'));
+      console.log(chalk.yellow('  npx tauri ios init'));
+      console.log(chalk.yellow('on a macOS system with Xcode installed.'));
+    }
+    
+    // Update package.json with Tauri scripts
+    await updatePackageJsonWithTauriScripts(options);
+    
+    // Create Tauri configuration adjustments
+    await createTauriConfigAdjustments(options);
+    
+    console.log(chalk.green('✅ Tauri integration completed!'));
+    
+    // Return to original directory
+    process.chdir(path.dirname(projectPath));
+    
+  } catch (error: any) {
+    console.error(chalk.red('Failed to set up Tauri integration:'), error.message);
+    console.log(chalk.yellow('You can set up Tauri manually later by running:'));
+    console.log(chalk.yellow('  npm install --save-dev @tauri-apps/cli'));
+    console.log(chalk.yellow('  npm install @tauri-apps/api'));
+    console.log(chalk.yellow('  npx tauri init'));
+    
+    // Return to original directory
+    process.chdir(path.dirname(projectPath));
+  }
+}
+
+async function updatePackageJsonWithTauriScripts(options: ProjectOptions): Promise<void> {
+  const packageJsonPath = path.join(process.cwd(), 'package.json');
+  
+  if (await fs.pathExists(packageJsonPath)) {
+    const packageJson = await fs.readJson(packageJsonPath);
+    
+    // Add Tauri scripts
+    packageJson.scripts = {
+      ...packageJson.scripts,
+      'tauri': 'tauri',
+      'tauri:dev': 'tauri dev',
+      'tauri:build': 'tauri build'
+    };
+    
+    // Add platform-specific scripts
+    if (options.tauriPlatforms.includes('android')) {
+      packageJson.scripts['tauri:android:dev'] = 'tauri android dev';
+      packageJson.scripts['tauri:android:build'] = 'tauri android build';
+    }
+    
+    if (options.tauriPlatforms.includes('ios')) {
+      packageJson.scripts['tauri:ios:dev'] = 'tauri ios dev';
+      packageJson.scripts['tauri:ios:build'] = 'tauri ios build';
+    }
+    
+    await fs.writeJson(packageJsonPath, packageJson, { spaces: 2 });
+    console.log(chalk.green('✓ Added Tauri scripts to package.json'));
+  }
+}
+
+async function createTauriConfigAdjustments(options: ProjectOptions): Promise<void> {
+  const tauriConfigPath = path.join(process.cwd(), 'src-tauri', 'tauri.conf.json');
+  
+  if (await fs.pathExists(tauriConfigPath)) {
+    try {
+      const tauriConfig = await fs.readJson(tauriConfigPath);
+      
+      // Update app identifier
+      if (tauriConfig.tauri && tauriConfig.tauri.bundle) {
+        tauriConfig.tauri.bundle.identifier = `com.${options.projectName.toLowerCase().replace(/[^a-z0-9]/g, '')}.app`;
+      }
+      
+      // Update build distDir to point to SvelteKit build
+      if (tauriConfig.build) {
+        tauriConfig.build.distDir = '../build';
+        tauriConfig.build.devPath = 'http://localhost:5173';
+      }
+      
+      await fs.writeJson(tauriConfigPath, tauriConfig, { spaces: 2 });
+      console.log(chalk.green('✓ Updated Tauri configuration for SvelteKit'));
+    } catch (error: any) {
+      console.log(chalk.yellow('⚠️ Could not update Tauri configuration automatically'));
+    }
+  }
 }
 
 async function createSvelteKitProject(options: ProjectOptions): Promise<void> {
@@ -407,7 +591,7 @@ A fast SvelteKit project created with skit-fast-cli.
 
 - ⚡ SvelteKit with TypeScript
 - 🎨 Tailwind CSS with all features enabled
-- 📝 ESLint and Prettier configured
+- 📝 ESLint and Prettier configured${options.useTauri ? '\n- 🖥️ Tauri integration for ' + options.tauriPlatforms.map(p => p === 'desktop' ? 'Desktop apps' : p.charAt(0).toUpperCase() + p.slice(1)).join(', ') : ''}
 - 🐳 Docker ready${options.useCoolify ? '\n- 🚀 Coolify deployment configured' : ''}${options.database ? `\n- 🗄️ ${options.database.charAt(0).toUpperCase() + options.database.slice(1)} database integration` : ''}${options.useRedis ? '\n- 🔴 Redis cache integration' : ''}
 
 ## Development
@@ -422,7 +606,39 @@ npm run dev
 # Build for production
 npm run build
 \`\`\`
+${options.useTauri ? `
+## Tauri Desktop/Mobile App
 
+\`\`\`bash
+# Run the desktop app in development
+npm run tauri:dev
+
+# Build the desktop app
+npm run tauri:build
+\`\`\`
+${options.tauriPlatforms.includes('android') ? `
+### Android
+
+\`\`\`bash
+# Run on Android (requires Android Studio and NDK)
+npm run tauri:android:dev
+
+# Build for Android
+npm run tauri:android:build
+\`\`\`
+` : ''}${options.tauriPlatforms.includes('ios') ? `
+### iOS
+
+\`\`\`bash
+# Run on iOS (requires macOS and Xcode)
+npm run tauri:ios:dev
+
+# Build for iOS
+npm run tauri:ios:build
+\`\`\`
+
+**Note**: iOS development requires macOS and Xcode. Run \`npx tauri ios init\` on macOS to set up iOS development.
+` : ''}` : ''}
 ## Docker
 
 \`\`\`bash
@@ -452,7 +668,8 @@ Set the following environment variables for deployment:
 - \`COOLIFY_DEV_WEBHOOK_URL\` - Webhook URL for development deployment
 ` : ''}
 ## Services
-${options.database ? `
+${options.useTauri ? `
+- **Desktop/Mobile**: Tauri app for ${options.tauriPlatforms.join(', ')}` : ''}${options.database ? `
 - **Database**: ${options.database}` : ''}${options.useRedis ? `
 - **Cache**: Redis` : ''}${options.services.length > 0 ? `
 ${options.services.map(service => `- **${service}**: Additional service`).join('\n')}` : ''}

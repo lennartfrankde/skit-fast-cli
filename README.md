@@ -7,6 +7,7 @@ A powerful CLI tool that creates SvelteKit projects with modern tooling, Docker 
 ## Features
 
 - ⚡ **SvelteKit** with TypeScript, ESLint, Prettier, and Tailwind CSS
+- 🖥️ **Tauri** desktop and mobile app development (optional)
 - 🐳 **Docker** ready with multi-stage builds
 - 🌊 **Coolify** deployment integration
 - 🗄️ **Database options**: PocketBase or MongoDB
@@ -40,15 +41,17 @@ skit-fast create
 The CLI will guide you through:
 
 1. **Project setup**: Name, directory selection
-2. **Coolify integration**: Optional deployment setup with URL and API token
-3. **Database selection**: PocketBase or MongoDB
-4. **Cache options**: Redis integration
-5. **Additional services**: LiteLLM, Qdrant
-6. **Docker registry**: For deployment configuration
+2. **Tauri integration**: Optional desktop/mobile app development with platform selection
+3. **Coolify integration**: Optional deployment setup with URL and API token
+4. **Database selection**: PocketBase or MongoDB
+5. **Cache options**: Redis integration
+6. **Additional services**: LiteLLM, Qdrant
+7. **Docker registry**: For deployment configuration
 
 ## What it creates
 
 - Complete SvelteKit project with TypeScript
+- Optional Tauri setup for desktop and mobile apps
 - Dockerfile and docker-compose.yml
 - GitHub Actions workflows (disabled by default)
 - Deployment scripts in package.json
@@ -60,6 +63,9 @@ The CLI will guide you through:
 - Node.js 16+
 - Docker (for containerization)
 - SvelteKit CLI (`@sveltejs/cli`) - installed automatically if needed
+- Rust (for Tauri desktop apps, if selected)
+- Android Studio & NDK (for Android apps, if selected)
+- Xcode on macOS (for iOS apps, if selected)
 
 ## Development
 
