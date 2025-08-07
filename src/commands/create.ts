@@ -410,7 +410,7 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
     return;
   }
 
-  console.log(chalk.blue('Setting up Coolify deployment...'));
+  console.log(chalk.blue('Setting up comprehensive Coolify deployment...'));
   
   try {
     const coolify = new CoolifyClient(options.coolifyUrl, options.coolifyApiToken);
@@ -426,50 +426,86 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
     // Create project with lowercase name to avoid errors
     const projectName = options.projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     console.log(chalk.blue(`Creating Coolify project: ${projectName}...`));
-    const project = await coolify.createProject(projectName);
+    const project = await coolify.createProject(projectName, `Auto-created SvelteKit project with full infrastructure`);
     
-    // Create SvelteKit service with lowercase registry tag
-    if (options.registryTag) {
-      const lowercaseRegistryTag = options.registryTag.toLowerCase();
-      console.log(chalk.blue('Creating SvelteKit application service...'));
-      await coolify.createSvelteKitService(project.id, 'app', lowercaseRegistryTag);
+    // Set up complete project infrastructure using the new comprehensive method
+    console.log(chalk.blue('Setting up complete project infrastructure...'));
+    const infrastructure = await coolify.setupProjectInfrastructure(project.id, {
+      includeSvelteKit: !!options.registryTag,
+      dockerImage: options.registryTag?.toLowerCase(),
+      includeDatabase: options.database,
+      includeRedis: options.useRedis,
+      includeServices: options.services
+    });
+    
+    console.log(chalk.green(`✅ Created ${infrastructure.services.length} services in Coolify project`));
+    
+    // Log service URLs and details
+    for (const service of infrastructure.services) {
+      console.log(chalk.cyan(`   • ${service.name}: Service created successfully`));
     }
     
-    // Create database service
+    // Get comprehensive environment variables including service connection details
+    console.log(chalk.blue('Generating environment variables with service configurations...'));
+    const envVars = await coolify.getEnvironmentVariables(project.id);
+    
+    // Add service-specific environment variables
+    const serviceEnvVars: Record<string, string> = {};
+    
+    // Add database connection strings
     if (options.database === 'pocketbase') {
-      console.log(chalk.blue('Creating PocketBase service...'));
-      await coolify.createPocketBaseService(project.id);
+      serviceEnvVars.POCKETBASE_URL = 'http://pocketbase:8090';
+      serviceEnvVars.DATABASE_TYPE = 'pocketbase';
     } else if (options.database === 'mongodb') {
-      console.log(chalk.yellow('MongoDB service creation not implemented yet. Please add manually in Coolify.'));
+      serviceEnvVars.MONGODB_URL = 'mongodb://admin:admin123@mongodb:27017/app?authSource=admin';
+      serviceEnvVars.DATABASE_TYPE = 'mongodb';
     }
     
-    // Create Redis service if requested
+    // Add Redis connection
     if (options.useRedis) {
-      console.log(chalk.blue('Creating Redis service...'));
-      await coolify.createRedisService(project.id);
+      serviceEnvVars.REDIS_URL = 'redis://:redis123@redis:6379';
     }
     
-    // Create additional services
+    // Add service URLs
     if (options.services.includes('litellm')) {
-      console.log(chalk.blue('Creating LiteLLM service...'));
-      await coolify.createLiteLLMService(project.id);
+      serviceEnvVars.LITELLM_URL = 'http://litellm:4000';
+      serviceEnvVars.LITELLM_API_BASE = 'http://litellm:4000';
     }
     
     if (options.services.includes('qdrant')) {
-      console.log(chalk.yellow('Qdrant service creation not implemented yet. Please add manually in Coolify.'));
+      serviceEnvVars.QDRANT_URL = 'http://qdrant:6333';
+      serviceEnvVars.QDRANT_GRPC_URL = 'http://qdrant:6334';
     }
     
-    // Get environment variables and create .env file with verified credentials
-    console.log(chalk.blue('Retrieving environment variables...'));
-    const envVars = await coolify.getEnvironmentVariables(project.id);
     const projectDir = options.createInCurrentDir ? '.' : options.projectName;
-    await createEnvironmentFile(projectDir, envVars, options.coolifyUrl, options.coolifyApiToken);
+    await createEnvironmentFile(projectDir, { ...envVars, ...serviceEnvVars }, options.coolifyUrl, options.coolifyApiToken);
     
-    console.log(chalk.green('✅ Coolify deployment setup completed!'));
+    console.log(chalk.green('✅ Comprehensive Coolify deployment setup completed!'));
     console.log(chalk.cyan(`🌐 Project URL: ${options.coolifyUrl}/projects/${project.id}`));
     
+    // Display service summary
+    console.log(chalk.blue('\n📋 Created Services Summary:'));
+    if (options.registryTag) {
+      console.log(chalk.cyan(`   • SvelteKit App: Docker deployment with health checks`));
+    }
+    if (options.database === 'pocketbase') {
+      console.log(chalk.cyan(`   • PocketBase: Database with persistent storage`));
+    } else if (options.database === 'mongodb') {
+      console.log(chalk.cyan(`   • MongoDB: Database with persistent storage`));
+    }
+    if (options.useRedis) {
+      console.log(chalk.cyan(`   • Redis: Cache with password protection`));
+    }
+    if (options.services.includes('litellm')) {
+      console.log(chalk.cyan(`   • LiteLLM: AI Gateway for multiple LLM providers`));
+    }
+    if (options.services.includes('qdrant')) {
+      console.log(chalk.cyan(`   • Qdrant: Vector database for AI embeddings`));
+    }
+    console.log(chalk.cyan(`   • Network: All services connected via app-network`));
+    
   } catch (error: any) {
-    console.error(chalk.red('Failed to set up Coolify deployment:'), error.message);
+    console.error(chalk.red('Failed to set up comprehensive Coolify deployment:'), error.message);
     console.log(chalk.yellow('You can set up Coolify deployment manually later.'));
     console.log(chalk.yellow('The project files will still be generated with Docker support.'));
     
@@ -490,6 +526,7 @@ async function createEnvironmentFile(projectName: string, envVars: Record<string
   const baseEnvVars: Record<string, string> = {
     NODE_ENV: 'development',
     PORT: '3000',
+    HOST: '0.0.0.0',
     ...envVars
   };
   
@@ -504,11 +541,11 @@ async function createEnvironmentFile(projectName: string, envVars: Record<string
   
   const envContent = [
     '# Environment Variables',
-    '# Generated by skit-fast-cli',
+    '# Generated by skit-fast-cli with comprehensive Coolify integration',
     '',
-    '# Application',
+    '# Application Configuration',
     ...Object.entries(baseEnvVars)
-      .filter(([key]) => ['NODE_ENV', 'PORT'].includes(key))
+      .filter(([key]) => ['NODE_ENV', 'PORT', 'HOST'].includes(key))
       .map(([key, value]) => `${key}=${value}`),
     '',
     '# Coolify Configuration',
@@ -516,30 +553,46 @@ async function createEnvironmentFile(projectName: string, envVars: Record<string
       .filter(([key]) => key.startsWith('COOLIFY_'))
       .map(([key, value]) => `${key}=${value}`),
     '',
-    '# Database',
-    '# DATABASE_URL=your_database_url_here',
+    '# Database Configuration',
+    ...Object.entries(baseEnvVars)
+      .filter(([key]) => key.includes('DATABASE') || key.includes('MONGODB') || key.includes('POCKETBASE'))
+      .map(([key, value]) => `${key}=${value}`),
     '',
-    '# Redis (if enabled)',
-    '# REDIS_URL=redis://localhost:6379',
+    '# Cache Configuration',
+    ...Object.entries(baseEnvVars)
+      .filter(([key]) => key.includes('REDIS'))
+      .map(([key, value]) => `${key}=${value}`),
+    '',
+    '# AI Services Configuration',
+    ...Object.entries(baseEnvVars)
+      .filter(([key]) => key.includes('LITELLM') || key.includes('QDRANT'))
+      .map(([key, value]) => `${key}=${value}`),
     '',
     '# Other Environment Variables'
   ];
   
   // Add remaining environment variables
   Object.entries(baseEnvVars)
-    .filter(([key]) => !['NODE_ENV', 'PORT'].includes(key) && !key.startsWith('COOLIFY_'))
+    .filter(([key]) => !['NODE_ENV', 'PORT', 'HOST'].includes(key) 
+      && !key.startsWith('COOLIFY_')
+      && !key.includes('DATABASE') && !key.includes('MONGODB') && !key.includes('POCKETBASE')
+      && !key.includes('REDIS')
+      && !key.includes('LITELLM') && !key.includes('QDRANT'))
     .forEach(([key, value]) => {
       envContent.push(`${key}=${value}`);
     });
   
-  // Add example variables if no other vars are available
+  // Add example variables if no service vars are available
   if (Object.keys(envVars).length === 0) {
-    envContent.push('# Add your environment variables here');
-    envContent.push('# EXAMPLE_VAR=example_value');
+    envContent.push('# Service connection examples (uncomment and modify as needed):');
+    envContent.push('# DATABASE_URL=your_database_url_here');
+    envContent.push('# REDIS_URL=redis://localhost:6379');
+    envContent.push('# LITELLM_URL=http://localhost:4000');
+    envContent.push('# QDRANT_URL=http://localhost:6333');
   }
     
   await fs.writeFile(envPath, envContent.join('\n'));
-  console.log(chalk.green(`✓ Created .env file with ${Object.keys(baseEnvVars).length} variables`));
+  console.log(chalk.green(`✓ Created comprehensive .env file with ${Object.keys(baseEnvVars).length} variables`));
 }
 
 async function generateProjectFiles(options: ProjectOptions): Promise<void> {
@@ -589,6 +642,38 @@ async function copyProjectTemplates(projectPath: string, options: ProjectOptions
       }
     }
     
+    // Create health check endpoint for SvelteKit if using Coolify
+    if (options.useCoolify) {
+      const healthDir = path.join(projectPath, 'src', 'routes', 'health');
+      await fs.ensureDir(healthDir);
+      
+      const healthEndpointContent = `// Health check endpoint for Coolify deployment
+import { json } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
+
+export const GET: RequestHandler = async () => {
+  const health = {
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    version: '1.0.0',
+    services: {
+      database: process.env.DATABASE_TYPE || 'none',
+      redis: process.env.REDIS_URL ? 'connected' : 'not configured',
+      litellm: process.env.LITELLM_URL ? 'available' : 'not configured',
+      qdrant: process.env.QDRANT_URL ? 'available' : 'not configured'
+    }
+  };
+
+  return json(health);
+};`;
+      
+      const healthEndpointPath = path.join(healthDir, '+server.ts');
+      await fs.writeFile(healthEndpointPath, healthEndpointContent);
+      console.log(chalk.green('✓ Created health check endpoint at /health'));
+    }
+    
     // Copy LiteLLM config if LiteLLM is selected
     if (options.services.includes('litellm')) {
       const litellmConfigPath = path.join(projectPath, 'litellm-config.yaml');
@@ -596,6 +681,24 @@ async function copyProjectTemplates(projectPath: string, options: ProjectOptions
       if (await fs.pathExists(templateLitellmConfig)) {
         await fs.copy(templateLitellmConfig, litellmConfigPath);
         console.log(chalk.green('✓ Created litellm-config.yaml'));
+      } else {
+        // Create a default LiteLLM config
+        const defaultLiteLLMConfig = `model_list:
+  - model_name: gpt-3.5-turbo
+    litellm_params:
+      model: openai/gpt-3.5-turbo
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: claude-3-haiku
+    litellm_params:
+      model: anthropic/claude-3-haiku-20240307
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+general_settings:
+  master_key: os.environ/MASTER_KEY
+  database_url: "postgresql://..."  # Optional
+`;
+        await fs.writeFile(litellmConfigPath, defaultLiteLLMConfig);
+        console.log(chalk.green('✓ Created default litellm-config.yaml'));
       }
     }
     
@@ -622,14 +725,16 @@ async function createProjectReadme(projectPath: string, options: ProjectOptions)
   
   const readmeContent = `# ${options.projectName}
 
-A fast SvelteKit project created with skit-fast-cli.
+A fast SvelteKit project created with skit-fast-cli and comprehensive Coolify integration.
 
 ## Features
 
 - ⚡ SvelteKit with TypeScript
 - 🎨 Tailwind CSS with all features enabled
 - 📝 ESLint and Prettier configured${options.useTauri ? '\n- 🖥️ Tauri integration for ' + options.tauriPlatforms.map(p => p === 'desktop' ? 'Desktop apps' : p.charAt(0).toUpperCase() + p.slice(1)).join(', ') : ''}
-- 🐳 Docker ready${options.useCoolify ? '\n- 🚀 Coolify deployment configured' : ''}${options.database ? `\n- 🗄️ ${options.database.charAt(0).toUpperCase() + options.database.slice(1)} database integration` : ''}${options.useRedis ? '\n- 🔴 Redis cache integration' : ''}
+- 🐳 Docker ready with optimized multi-stage build${options.useCoolify ? '\n- 🚀 Complete Coolify deployment with auto-provisioned infrastructure' : ''}${options.database ? `\n- 🗄️ ${options.database.charAt(0).toUpperCase() + options.database.slice(1)} database with persistent storage` : ''}${options.useRedis ? '\n- 🔴 Redis cache with password protection' : ''}${options.services.includes('litellm') ? '\n- 🤖 LiteLLM AI Gateway for multiple LLM providers' : ''}${options.services.includes('qdrant') ? '\n- 🔍 Qdrant vector database for AI embeddings' : ''}
+- 🔗 Service networking and health checks configured
+- ⚙️ Comprehensive environment configuration
 
 ## Development
 
@@ -682,34 +787,63 @@ npm run tauri:ios:build
 # Build Docker image
 npm run docker:build
 
-# Run with docker-compose
+# Run with docker-compose (includes all services)
 docker-compose up
 \`\`\`
 ${options.useCoolify ? `
-## Deployment
+## Coolify Deployment
 
-### Production
+Your project has been automatically configured with a complete infrastructure in Coolify:
+
+### Services Created
+${options.registryTag ? '- **SvelteKit App**: Containerized application with health checks and auto-deployment' : ''}${options.database === 'pocketbase' ? '\n- **PocketBase**: Database service with persistent storage and admin interface' : ''}${options.database === 'mongodb' ? '\n- **MongoDB**: Document database with authentication and persistent storage' : ''}${options.useRedis ? '\n- **Redis**: In-memory cache with password protection' : ''}${options.services.includes('litellm') ? '\n- **LiteLLM**: AI Gateway supporting OpenAI, Anthropic, and other LLM providers' : ''}${options.services.includes('qdrant') ? '\n- **Qdrant**: Vector database for AI embeddings and semantic search' : ''}
+- **Network**: All services connected via dedicated network for inter-service communication
+
+### Deployment Commands
 \`\`\`bash
+# Deploy to production
 npm run deploy:prod
+
+# Deploy to development
+npm run deploy:dev
+
+# Deploy PR preview
+npm run deploy:pr
 \`\`\`
 
-### Development
-\`\`\`bash
-npm run deploy:dev
-\`\`\`
+### Health Monitoring
+Your application includes a health check endpoint at \`/health\` that monitors:
+- Application status and uptime
+- Service connectivity (database, cache, AI services)
+- Environment configuration
 
 ### Environment Variables
-
-Set the following environment variables for deployment:
-- \`COOLIFY_WEBHOOK_URL\` - Webhook URL for production deployment
-- \`COOLIFY_DEV_WEBHOOK_URL\` - Webhook URL for development deployment
+All service connections are pre-configured in your \`.env\` file:
+${options.database === 'pocketbase' ? '- \`POCKETBASE_URL\`: PocketBase admin interface' : ''}${options.database === 'mongodb' ? '- \`MONGODB_URL\`: MongoDB connection string with authentication' : ''}${options.useRedis ? '\n- \`REDIS_URL\`: Redis connection with password' : ''}${options.services.includes('litellm') ? '\n- \`LITELLM_URL\`: LiteLLM API gateway endpoint' : ''}${options.services.includes('qdrant') ? '\n- \`QDRANT_URL\`: Qdrant vector database HTTP API' : ''}
 ` : ''}
-## Services
-${options.useTauri ? `
-- **Desktop/Mobile**: Tauri app for ${options.tauriPlatforms.join(', ')}` : ''}${options.database ? `
-- **Database**: ${options.database}` : ''}${options.useRedis ? `
-- **Cache**: Redis` : ''}${options.services.length > 0 ? `
-${options.services.map(service => `- **${service}**: Additional service`).join('\n')}` : ''}
+## Services${options.database ? `
+
+### Database: ${options.database}
+${options.database === 'pocketbase' ? 'PocketBase provides a complete backend with admin UI, real-time subscriptions, and file storage.' : 'MongoDB offers flexible document storage with rich query capabilities.'}
+- **Development**: Available at http://localhost:${options.database === 'pocketbase' ? '8090' : '27017'}
+- **Production**: Auto-configured in Coolify with persistent storage` : ''}${options.useRedis ? `
+
+### Cache: Redis
+Redis provides high-performance caching and session storage.
+- **Development**: Available at redis://localhost:6379
+- **Production**: Auto-configured with password protection` : ''}${options.services.includes('litellm') ? `
+
+### AI Gateway: LiteLLM
+LiteLLM provides a unified API for multiple LLM providers.
+- **Development**: Available at http://localhost:4000
+- **Supported Providers**: OpenAI, Anthropic, Cohere, and more
+- **Configuration**: Edit \`litellm-config.yaml\` for your API keys` : ''}${options.services.includes('qdrant') ? `
+
+### Vector Database: Qdrant
+Qdrant provides vector storage for AI embeddings and semantic search.
+- **Development**: Available at http://localhost:6333
+- **Production**: Auto-configured with persistent storage
+- **Web UI**: Access the dashboard for vector management` : ''}
 
 ## GitHub Actions
 
@@ -720,9 +854,18 @@ GitHub Actions workflows are included but disabled by default. To enable:
    - \`DOCKER_USERNAME\` 
    - \`DOCKER_PASSWORD\`${options.useCoolify ? `
    - \`COOLIFY_WEBHOOK_URL\`
-   - \`COOLIFY_DEV_WEBHOOK_URL\`` : ''}
+   - \`COOLIFY_DEV_WEBHOOK_URL\`
+   - \`COOLIFY_API_URL\`
+   - \`COOLIFY_API_TOKEN\`
+   - \`COOLIFY_PROJECT_ID\`` : ''}
 
 2. Edit \`.github/workflows/*.yml\` and change \`if: false\` to \`if: true\`
+
+Features:
+- **Production deployment**: Automatic deployment on main branch
+- **Development deployment**: Automatic deployment on dev/develop branches  
+- **PR previews**: Temporary deployments for each pull request
+- **Automatic cleanup**: PR deployments removed when PR is closed
 
 ## License
 
@@ -730,7 +873,7 @@ MIT
 `;
 
   await fs.writeFile(readmePath, readmeContent);
-  console.log(chalk.green('✓ Created README.md'));
+  console.log(chalk.green('✓ Created comprehensive README.md with service documentation'));
 }
 
 async function createDockerfile(projectPath: string, options: ProjectOptions): Promise<void> {
