@@ -621,92 +621,151 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
     
     // Set up complete project infrastructure using the new comprehensive method
     console.log(chalk.blue('Setting up complete project infrastructure...'));
-    const infrastructure = await coolify.setupProjectInfrastructure(project.id, {
-      includeSvelteKit: !!options.registryTag,
-      dockerImage: options.registryTag?.toLowerCase(),
-      includeDatabase: options.database,
-      includeRedis: options.useRedis,
-      includeServices: options.services
-    });
-    
-    console.log(chalk.green(`✅ Created ${infrastructure.services.length} services in Coolify project`));
-    
-    // Retrieve webhook URLs for deployment automation
-    console.log(chalk.blue('Retrieving deployment webhook URLs...'));
-    const webhookEnvVars: Record<string, string> = {};
-    
-    for (const service of infrastructure.services) {
-      console.log(chalk.cyan(`   • ${service.name}: Service created successfully`));
+    try {
+      const infrastructure = await coolify.setupProjectInfrastructure(project.id, {
+        includeSvelteKit: !!options.registryTag,
+        dockerImage: options.registryTag?.toLowerCase(),
+        includeDatabase: options.database,
+        includeRedis: options.useRedis,
+        includeServices: options.services
+      });
       
-      // Get webhook URL for SvelteKit app
-      if (service.name === 'app' || service.name.includes('sveltekit')) {
-        const webhookUrl = await coolify.getServiceWebhook(project.id, service.id);
-        if (webhookUrl) {
-          webhookEnvVars.COOLIFY_WEBHOOK_URL = webhookUrl;
-          webhookEnvVars.COOLIFY_DEPLOY_WEBHOOK = webhookUrl;
-          console.log(chalk.green(`✓ Retrieved deployment webhook URL`));
+      console.log(chalk.green(`✅ Created ${infrastructure.services.length} services in Coolify project`));
+      
+      // Retrieve webhook URLs for deployment automation
+      console.log(chalk.blue('Retrieving deployment webhook URLs...'));
+      const webhookEnvVars: Record<string, string> = {};
+      
+      for (const service of infrastructure.services) {
+        console.log(chalk.cyan(`   • ${service.name}: Service created successfully`));
+        
+        // Get webhook URL for SvelteKit app
+        if (service.name === 'app' || service.name.includes('sveltekit')) {
+          const webhookUrl = await coolify.getServiceWebhook(project.id, service.id);
+          if (webhookUrl) {
+            webhookEnvVars.COOLIFY_WEBHOOK_URL = webhookUrl;
+            webhookEnvVars.COOLIFY_DEPLOY_WEBHOOK = webhookUrl;
+            console.log(chalk.green(`✓ Retrieved deployment webhook URL`));
+          }
         }
       }
+      
+      // Get comprehensive environment variables including service connection details
+      console.log(chalk.blue('Generating environment variables with service configurations...'));
+      const envVars = await coolify.getEnvironmentVariables(project.id);
+      
+      // Add service-specific environment variables
+      const serviceEnvVars: Record<string, string> = { ...webhookEnvVars };
+      
+      // Add database connection strings
+      if (options.database === 'pocketbase') {
+        serviceEnvVars.POCKETBASE_URL = 'http://pocketbase:8090';
+        serviceEnvVars.DATABASE_TYPE = 'pocketbase';
+      } else if (options.database === 'mongodb') {
+        serviceEnvVars.MONGODB_URL = 'mongodb://admin:admin123@mongodb:27017/app?authSource=admin';
+        serviceEnvVars.DATABASE_TYPE = 'mongodb';
+      }
+      
+      // Add Redis connection
+      if (options.useRedis) {
+        serviceEnvVars.REDIS_URL = 'redis://:redis123@redis:6379';
+      }
+      
+      // Add service URLs
+      if (options.services.includes('litellm')) {
+        serviceEnvVars.LITELLM_URL = 'http://litellm:4000';
+        serviceEnvVars.LITELLM_API_BASE = 'http://litellm:4000';
+      }
+      
+      if (options.services.includes('qdrant')) {
+        serviceEnvVars.QDRANT_URL = 'http://qdrant:6333';
+        serviceEnvVars.QDRANT_GRPC_URL = 'http://qdrant:6334';
+      }
+      
+      const projectDir = options.createInCurrentDir ? '.' : options.projectName;
+      await createEnvironmentFile(projectDir, { ...envVars, ...serviceEnvVars }, options.coolifyUrl, options.coolifyApiToken);
+      
+      console.log(chalk.green('✅ Comprehensive Coolify deployment setup completed!'));
+      console.log(chalk.cyan(`🌐 Project URL: ${options.coolifyUrl}/projects/${project.id}`));
+      
+      // Display service summary
+      console.log(chalk.blue('\n📋 Created Services Summary:'));
+      if (options.registryTag) {
+        console.log(chalk.cyan(`   • SvelteKit App: Docker deployment with health checks`));
+      }
+      if (options.database === 'pocketbase') {
+        console.log(chalk.cyan(`   • PocketBase: Database with persistent storage`));
+      } else if (options.database === 'mongodb') {
+        console.log(chalk.cyan(`   • MongoDB: Database with persistent storage`));
+      }
+      if (options.useRedis) {
+        console.log(chalk.cyan(`   • Redis: Cache with password protection`));
+      }
+      if (options.services.includes('litellm')) {
+        console.log(chalk.cyan(`   • LiteLLM: AI Gateway for multiple LLM providers`));
+      }
+      if (options.services.includes('qdrant')) {
+        console.log(chalk.cyan(`   • Qdrant: Vector database for AI embeddings`));
+      }
+      console.log(chalk.cyan(`   • Network: All services connected via app-network`));
+      
+    } catch (serviceError: any) {
+      // Service creation failed, but project exists - provide manual setup guidance
+      console.error(chalk.red('Service creation failed, but project was created successfully.'));
+      console.log(chalk.yellow('\n🔧 Manual Setup Required:'));
+      console.log(chalk.cyan(`1. Open your Coolify dashboard: ${options.coolifyUrl}/projects/${project.id}`));
+      console.log(chalk.cyan(`2. Manually create the following services:`));
+      
+      if (options.registryTag) {
+        console.log(chalk.cyan(`   • SvelteKit App: Use Docker image "${options.registryTag}"`));
+        console.log(chalk.cyan(`     - Port: 3000`));
+        console.log(chalk.cyan(`     - Environment: NODE_ENV=production, PORT=3000`));
+      }
+      if (options.database === 'pocketbase') {
+        console.log(chalk.cyan(`   • PocketBase: Use image "ghcr.io/muchobien/pocketbase:latest"`));
+        console.log(chalk.cyan(`     - Port: 8090`));
+      } else if (options.database === 'mongodb') {
+        console.log(chalk.cyan(`   • MongoDB: Use image "mongo:latest"`));
+        console.log(chalk.cyan(`     - Port: 27017`));
+        console.log(chalk.cyan(`     - Environment: MONGO_INITDB_ROOT_USERNAME=admin, MONGO_INITDB_ROOT_PASSWORD=admin123`));
+      }
+      if (options.useRedis) {
+        console.log(chalk.cyan(`   • Redis: Use image "redis:alpine"`));
+        console.log(chalk.cyan(`     - Port: 6379`));
+        console.log(chalk.cyan(`     - Command: redis-server --requirepass redis123`));
+      }
+      if (options.services.includes('litellm')) {
+        console.log(chalk.cyan(`   • LiteLLM: Use image "ghcr.io/berriai/litellm:main-latest"`));
+        console.log(chalk.cyan(`     - Port: 4000`));
+      }
+      if (options.services.includes('qdrant')) {
+        console.log(chalk.cyan(`   • Qdrant: Use image "qdrant/qdrant:latest"`));
+        console.log(chalk.cyan(`     - Port: 6333`));
+      }
+      
+      console.log(chalk.yellow('\n3. After creating services manually, your project will work as expected.'));
+      
+      // Still create .env file with basic config
+      const projectDir = options.createInCurrentDir ? '.' : options.projectName;
+      const basicEnvVars: Record<string, string> = {};
+      
+      if (options.database === 'pocketbase') {
+        basicEnvVars.POCKETBASE_URL = 'http://pocketbase:8090';
+        basicEnvVars.DATABASE_TYPE = 'pocketbase';
+      } else if (options.database === 'mongodb') {
+        basicEnvVars.MONGODB_URL = 'mongodb://admin:admin123@mongodb:27017/app?authSource=admin';
+        basicEnvVars.DATABASE_TYPE = 'mongodb';
+      }
+      
+      if (options.useRedis) {
+        basicEnvVars.REDIS_URL = 'redis://:redis123@redis:6379';
+      }
+      
+      await createEnvironmentFile(projectDir, basicEnvVars, options.coolifyUrl, options.coolifyApiToken);
+      
+      console.log(chalk.green('\n✅ Project created with manual setup instructions.'));
+      console.log(chalk.cyan(`🌐 Coolify Project: ${options.coolifyUrl}/projects/${project.id}`));
     }
-    
-    // Get comprehensive environment variables including service connection details
-    console.log(chalk.blue('Generating environment variables with service configurations...'));
-    const envVars = await coolify.getEnvironmentVariables(project.id);
-    
-    // Add service-specific environment variables
-    const serviceEnvVars: Record<string, string> = { ...webhookEnvVars };
-    
-    // Add database connection strings
-    if (options.database === 'pocketbase') {
-      serviceEnvVars.POCKETBASE_URL = 'http://pocketbase:8090';
-      serviceEnvVars.DATABASE_TYPE = 'pocketbase';
-    } else if (options.database === 'mongodb') {
-      serviceEnvVars.MONGODB_URL = 'mongodb://admin:admin123@mongodb:27017/app?authSource=admin';
-      serviceEnvVars.DATABASE_TYPE = 'mongodb';
-    }
-    
-    // Add Redis connection
-    if (options.useRedis) {
-      serviceEnvVars.REDIS_URL = 'redis://:redis123@redis:6379';
-    }
-    
-    // Add service URLs
-    if (options.services.includes('litellm')) {
-      serviceEnvVars.LITELLM_URL = 'http://litellm:4000';
-      serviceEnvVars.LITELLM_API_BASE = 'http://litellm:4000';
-    }
-    
-    if (options.services.includes('qdrant')) {
-      serviceEnvVars.QDRANT_URL = 'http://qdrant:6333';
-      serviceEnvVars.QDRANT_GRPC_URL = 'http://qdrant:6334';
-    }
-    
-    const projectDir = options.createInCurrentDir ? '.' : options.projectName;
-    await createEnvironmentFile(projectDir, { ...envVars, ...serviceEnvVars }, options.coolifyUrl, options.coolifyApiToken);
-    
-    console.log(chalk.green('✅ Comprehensive Coolify deployment setup completed!'));
-    console.log(chalk.cyan(`🌐 Project URL: ${options.coolifyUrl}/projects/${project.id}`));
-    
-    // Display service summary
-    console.log(chalk.blue('\n📋 Created Services Summary:'));
-    if (options.registryTag) {
-      console.log(chalk.cyan(`   • SvelteKit App: Docker deployment with health checks`));
-    }
-    if (options.database === 'pocketbase') {
-      console.log(chalk.cyan(`   • PocketBase: Database with persistent storage`));
-    } else if (options.database === 'mongodb') {
-      console.log(chalk.cyan(`   • MongoDB: Database with persistent storage`));
-    }
-    if (options.useRedis) {
-      console.log(chalk.cyan(`   • Redis: Cache with password protection`));
-    }
-    if (options.services.includes('litellm')) {
-      console.log(chalk.cyan(`   • LiteLLM: AI Gateway for multiple LLM providers`));
-    }
-    if (options.services.includes('qdrant')) {
-      console.log(chalk.cyan(`   • Qdrant: Vector database for AI embeddings`));
-    }
-    console.log(chalk.cyan(`   • Network: All services connected via app-network`));
     
   } catch (error: any) {
     console.error(chalk.red('Failed to set up comprehensive Coolify deployment:'), error.message);
