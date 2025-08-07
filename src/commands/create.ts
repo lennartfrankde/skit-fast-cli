@@ -33,19 +33,25 @@ export async function createProject(): Promise<void> {
   
   console.log(chalk.green.bold('\n✅ Project created successfully!'));
   console.log(chalk.cyan('Next steps:'));
-  console.log(chalk.cyan('  1. cd ' + options.projectName));
-  console.log(chalk.cyan('  2. npm install'));
-  console.log(chalk.cyan('  3. npm run dev'));
+  if (!options.createInCurrentDir) {
+    console.log(chalk.cyan('  1. cd ' + options.projectName));
+    console.log(chalk.cyan('  2. npm install'));
+    console.log(chalk.cyan('  3. npm run dev'));
+  } else {
+    console.log(chalk.cyan('  1. npm install'));
+    console.log(chalk.cyan('  2. npm run dev'));
+  }
   
   if (options.useTauri) {
-    console.log(chalk.cyan('  4. npm run tauri dev # to run the desktop app'));
+    const nextStep = options.createInCurrentDir ? '3' : '4';
+    console.log(chalk.cyan(`  ${nextStep}. npm run tauri dev # to run the desktop app`));
     if (options.tauriPlatforms.includes('android')) {
-      console.log(chalk.cyan('  5. npm run tauri android dev # to run on Android'));
+      console.log(chalk.cyan(`  ${parseInt(nextStep) + 1}. npm run tauri android dev # to run on Android`));
     }
   }
   
   if (options.useCoolify) {
-    const step = options.useTauri ? '6' : '4';
+    const step = options.useTauri ? (options.createInCurrentDir ? '5' : '6') : (options.createInCurrentDir ? '3' : '4');
     console.log(chalk.cyan(`  ${step}. npm run deploy:prod # to deploy to production`));
     console.log(chalk.cyan(`  ${parseInt(step) + 1}. npm run deploy:dev # to deploy to development`));
   }
@@ -59,11 +65,11 @@ async function getProjectOptions(): Promise<ProjectOptions> {
     {
       type: 'input',
       name: 'projectName',
-      message: 'Project name:',
-      default: currentDir,
+      message: 'Project name (leave empty or use "." for current directory):',
+      default: '',
       validate: (input: string) => {
-        if (!input.trim()) {
-          return 'Project name is required';
+        if (input.trim() === '' || input.trim() === '.') {
+          return true; // Allow empty or "." for current directory
         }
         if (!/^[a-zA-Z0-9-_]+$/.test(input)) {
           return 'Project name should only contain letters, numbers, hyphens, and underscores';
@@ -123,8 +129,8 @@ async function getProjectOptions(): Promise<ProjectOptions> {
         {
           type: 'input',
           name: 'registryTag',
-          message: 'Docker registry tag:',
-          default: `${coolifyAnswers.dockerRegistry}/${basicAnswers.projectName}:latest`,
+          message: 'Docker registry tag (will be converted to lowercase):',
+          default: `${coolifyAnswers.dockerRegistry}/${basicAnswers.projectName.toLowerCase()}:latest`,
           validate: (input: string) => {
             if (!input.trim()) {
               return 'Registry tag is required';
@@ -133,7 +139,7 @@ async function getProjectOptions(): Promise<ProjectOptions> {
           }
         }
       ]);
-      coolifyAnswers.registryTag = registryAnswer.registryTag;
+      coolifyAnswers.registryTag = registryAnswer.registryTag.toLowerCase();
     }
   }
   
@@ -206,18 +212,27 @@ async function getProjectOptions(): Promise<ProjectOptions> {
     ...coolifyAnswers,
     ...serviceAnswers,
     useTauri: tauriAnswers.useTauri,
-    tauriPlatforms
+    tauriPlatforms,
+    // Normalize project name: use current dir name if empty or "."
+    projectName: (basicAnswers.projectName.trim() === '' || basicAnswers.projectName.trim() === '.') 
+      ? currentDir 
+      : basicAnswers.projectName.trim(),
+    // Flag to indicate if creating in current directory
+    createInCurrentDir: basicAnswers.projectName.trim() === '' || basicAnswers.projectName.trim() === '.'
   } as ProjectOptions;
 }
 
 async function setupTauriIntegration(options: ProjectOptions): Promise<void> {
   console.log(chalk.blue('Setting up Tauri integration...'));
   
-  const projectPath = path.join(process.cwd(), options.projectName);
+  const projectPath = options.createInCurrentDir ? process.cwd() : path.join(process.cwd(), options.projectName);
   
   try {
     // Navigate to project directory for Tauri commands
-    process.chdir(projectPath);
+    const originalCwd = process.cwd();
+    if (!options.createInCurrentDir) {
+      process.chdir(projectPath);
+    }
     
     // Install Tauri CLI and dependencies
     console.log(chalk.blue('Installing Tauri dependencies...'));
@@ -256,8 +271,10 @@ async function setupTauriIntegration(options: ProjectOptions): Promise<void> {
     
     console.log(chalk.green('✅ Tauri integration completed!'));
     
-    // Return to original directory
-    process.chdir(path.dirname(projectPath));
+    // Return to original directory if we changed
+    if (!options.createInCurrentDir) {
+      process.chdir(originalCwd);
+    }
     
   } catch (error: any) {
     console.error(chalk.red('Failed to set up Tauri integration:'), error.message);
@@ -266,8 +283,11 @@ async function setupTauriIntegration(options: ProjectOptions): Promise<void> {
     console.log(chalk.yellow('  npm install @tauri-apps/api'));
     console.log(chalk.yellow('  npx tauri init'));
     
-    // Return to original directory
-    process.chdir(path.dirname(projectPath));
+    // Return to original directory if we changed
+    if (!options.createInCurrentDir) {
+      const originalCwd = process.cwd();
+      process.chdir(originalCwd);
+    }
   }
 }
 
@@ -332,30 +352,39 @@ async function createSvelteKitProject(options: ProjectOptions): Promise<void> {
     // Create SvelteKit project with sv create
     console.log(chalk.blue('Creating SvelteKit project with sv create...'));
     
-    // Check if the directory already exists
-    if (await fs.pathExists(options.projectName)) {
-      throw new Error(`Directory ${options.projectName} already exists`);
+    const projectPath = options.createInCurrentDir ? '.' : options.projectName;
+    
+    // Check if we're creating in current directory and if it's not empty
+    if (options.createInCurrentDir) {
+      const currentDirFiles = await fs.readdir(process.cwd());
+      const hasImportantFiles = currentDirFiles.some(file => 
+        ['package.json', 'svelte.config.js', 'vite.config.js', 'src'].includes(file)
+      );
+      
+      if (hasImportantFiles) {
+        console.log(chalk.yellow('⚠️ Current directory contains existing project files. Creating SvelteKit project in current directory...'));
+      }
+    } else {
+      // Check if the directory already exists
+      if (await fs.pathExists(options.projectName)) {
+        throw new Error(`Directory ${options.projectName} already exists`);
+      }
     }
     
     // Execute sv create with automated options
-    const svCreateCommand = [
-      'npx', 'sv', 'create', options.projectName,
-      '--template', 'minimal',
-      '--types', 'ts',
-      '--no-add-ons',
-      '--install', 'npm'
-    ];
+    const svCreateArgs = options.createInCurrentDir 
+      ? ['sv', 'create', '.', '--template', 'minimal', '--types', 'ts', '--no-add-ons', '--install', 'npm']
+      : ['sv', 'create', options.projectName, '--template', 'minimal', '--types', 'ts', '--no-add-ons', '--install', 'npm'];
     
-    console.log(chalk.blue(`Running: ${svCreateCommand.join(' ')}`));
-    await executeCommandAsync('npx', ['sv', 'create', options.projectName, '--template', 'minimal', '--types', 'ts', '--no-add-ons', '--install', 'npm']);
+    console.log(chalk.blue(`Running: npx ${svCreateArgs.join(' ')}`));
+    await executeCommandAsync('npx', svCreateArgs);
     
     // Verify the project was created
-    if (!await fs.pathExists(options.projectName)) {
-      throw new Error(`Project directory ${options.projectName} not found after sv create.`);
-    }
+    const verifyPath = options.createInCurrentDir ? '.' : options.projectName;
+    const packageJsonPath = options.createInCurrentDir 
+      ? path.join(process.cwd(), 'package.json')
+      : path.join(options.projectName, 'package.json');
     
-    // Verify it's a SvelteKit project
-    const packageJsonPath = path.join(options.projectName, 'package.json');
     if (!await fs.pathExists(packageJsonPath)) {
       throw new Error('Invalid SvelteKit project: package.json not found');
     }
@@ -365,10 +394,10 @@ async function createSvelteKitProject(options: ProjectOptions): Promise<void> {
       throw new Error('Invalid SvelteKit project: @sveltejs/kit not found in devDependencies');
     }
     
-    console.log(chalk.green(`✓ SvelteKit project created and verified: ${options.projectName}`));
+    console.log(chalk.green(`✓ SvelteKit project created and verified: ${options.createInCurrentDir ? 'current directory' : options.projectName}`));
     
     // Add additional dependencies that we want
-    await addAdditionalDependencies(options.projectName);
+    await addAdditionalDependencies(options.createInCurrentDir ? '.' : options.projectName);
     
   } catch (error: any) {
     console.error(chalk.red('Failed to create SvelteKit project:'), error.message);
@@ -386,22 +415,24 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
   try {
     const coolify = new CoolifyClient(options.coolifyUrl, options.coolifyApiToken);
     
-    // Test connection
-    console.log(chalk.blue('Testing Coolify connection...'));
+    // Test connection and verify credentials
+    console.log(chalk.blue('Verifying Coolify credentials...'));
     const connected = await coolify.testConnection();
     if (!connected) {
       throw new Error('Failed to connect to Coolify API. Please check your URL and API token.');
     }
-    console.log(chalk.green('✓ Connected to Coolify'));
+    console.log(chalk.green('✓ Coolify credentials verified successfully'));
     
-    // Create project
-    console.log(chalk.blue('Creating Coolify project...'));
-    const project = await coolify.createProject(options.projectName);
+    // Create project with lowercase name to avoid errors
+    const projectName = options.projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    console.log(chalk.blue(`Creating Coolify project: ${projectName}...`));
+    const project = await coolify.createProject(projectName);
     
-    // Create SvelteKit service
+    // Create SvelteKit service with lowercase registry tag
     if (options.registryTag) {
+      const lowercaseRegistryTag = options.registryTag.toLowerCase();
       console.log(chalk.blue('Creating SvelteKit application service...'));
-      await coolify.createSvelteKitService(project.id, 'app', options.registryTag);
+      await coolify.createSvelteKitService(project.id, 'app', lowercaseRegistryTag);
     }
     
     // Create database service
@@ -428,10 +459,11 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
       console.log(chalk.yellow('Qdrant service creation not implemented yet. Please add manually in Coolify.'));
     }
     
-    // Get environment variables and create .env file
+    // Get environment variables and create .env file with verified credentials
     console.log(chalk.blue('Retrieving environment variables...'));
     const envVars = await coolify.getEnvironmentVariables(project.id);
-    await createEnvironmentFile(options.projectName, envVars, options.coolifyUrl);
+    const projectDir = options.createInCurrentDir ? '.' : options.projectName;
+    await createEnvironmentFile(projectDir, envVars, options.coolifyUrl, options.coolifyApiToken);
     
     console.log(chalk.green('✅ Coolify deployment setup completed!'));
     console.log(chalk.cyan(`🌐 Project URL: ${options.coolifyUrl}/projects/${project.id}`));
@@ -441,12 +473,18 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
     console.log(chalk.yellow('You can set up Coolify deployment manually later.'));
     console.log(chalk.yellow('The project files will still be generated with Docker support.'));
     
-    // Don't throw the error - continue with local project setup
+    // Still save credentials to .env even if Coolify setup fails
+    if (options.coolifyUrl && options.coolifyApiToken) {
+      const projectDir = options.createInCurrentDir ? '.' : options.projectName;
+      await createEnvironmentFile(projectDir, {}, options.coolifyUrl, options.coolifyApiToken);
+    }
   }
 }
 
-async function createEnvironmentFile(projectName: string, envVars: Record<string, string>, coolifyUrl?: string): Promise<void> {
-  const envPath = path.join(process.cwd(), projectName, '.env');
+async function createEnvironmentFile(projectName: string, envVars: Record<string, string>, coolifyUrl?: string, coolifyApiToken?: string): Promise<void> {
+  const envPath = projectName === '.' 
+    ? path.join(process.cwd(), '.env')
+    : path.join(process.cwd(), projectName, '.env');
   
   // Create base environment variables with sensible defaults
   const baseEnvVars: Record<string, string> = {
@@ -455,9 +493,13 @@ async function createEnvironmentFile(projectName: string, envVars: Record<string
     ...envVars
   };
   
-  // Add Coolify-specific environment variables if URL is provided
+  // Add Coolify-specific environment variables if provided
   if (coolifyUrl) {
     baseEnvVars.COOLIFY_URL = coolifyUrl;
+  }
+  
+  if (coolifyApiToken) {
+    baseEnvVars.COOLIFY_API_TOKEN = coolifyApiToken;
   }
   
   const envContent = [
@@ -469,23 +511,28 @@ async function createEnvironmentFile(projectName: string, envVars: Record<string
       .filter(([key]) => ['NODE_ENV', 'PORT'].includes(key))
       .map(([key, value]) => `${key}=${value}`),
     '',
+    '# Coolify Configuration',
+    ...Object.entries(baseEnvVars)
+      .filter(([key]) => key.startsWith('COOLIFY_'))
+      .map(([key, value]) => `${key}=${value}`),
+    '',
     '# Database',
     '# DATABASE_URL=your_database_url_here',
     '',
     '# Redis (if enabled)',
     '# REDIS_URL=redis://localhost:6379',
     '',
-    '# Coolify Environment Variables'
+    '# Other Environment Variables'
   ];
   
-  // Add Coolify environment variables
+  // Add remaining environment variables
   Object.entries(baseEnvVars)
-    .filter(([key]) => !['NODE_ENV', 'PORT'].includes(key))
+    .filter(([key]) => !['NODE_ENV', 'PORT'].includes(key) && !key.startsWith('COOLIFY_'))
     .forEach(([key, value]) => {
       envContent.push(`${key}=${value}`);
     });
   
-  // Add example variables if no Coolify vars are available
+  // Add example variables if no other vars are available
   if (Object.keys(envVars).length === 0) {
     envContent.push('# Add your environment variables here');
     envContent.push('# EXAMPLE_VAR=example_value');
@@ -498,7 +545,7 @@ async function createEnvironmentFile(projectName: string, envVars: Record<string
 async function generateProjectFiles(options: ProjectOptions): Promise<void> {
   console.log(chalk.blue('Generating project files...'));
   
-  const projectPath = path.join(process.cwd(), options.projectName);
+  const projectPath = options.createInCurrentDir ? process.cwd() : path.join(process.cwd(), options.projectName);
   
   // Ensure project directory exists
   if (!await fs.pathExists(projectPath)) {
@@ -515,7 +562,7 @@ async function generateProjectFiles(options: ProjectOptions): Promise<void> {
     // Create deployment scripts
     await createDeploymentScripts(projectPath, options);
     
-    // Create GitHub Actions (disabled by default)
+    // Create GitHub Actions with PR deployment support
     await createGitHubActions(projectPath, options);
     
     // Copy and generate additional project files
@@ -780,11 +827,15 @@ async function createDeploymentScripts(projectPath: string, options: ProjectOpti
   if (await fs.pathExists(packageJsonPath)) {
     const packageJson = await fs.readJson(packageJsonPath);
     
+    const lowercaseRegistryTag = options.registryTag?.toLowerCase() || options.projectName.toLowerCase();
+    
     packageJson.scripts = {
       ...packageJson.scripts,
-      'docker:build': `docker build -t ${options.registryTag || options.projectName} .`,
+      'docker:build': `docker build -t ${lowercaseRegistryTag} .`,
+      'docker:build:pr': `docker build -t ${lowercaseRegistryTag.replace(':latest', '')}:pr-$(git rev-parse --short HEAD) .`,
       'deploy:prod': 'npm run docker:build && docker push && curl -X POST $COOLIFY_WEBHOOK_URL',
-      'deploy:dev': 'npm run docker:build && docker push && curl -X POST $COOLIFY_DEV_WEBHOOK_URL'
+      'deploy:dev': 'npm run docker:build && docker push && curl -X POST $COOLIFY_DEV_WEBHOOK_URL',
+      'deploy:pr': 'npm run docker:build:pr && docker push && echo "PR deployment complete"'
     };
     
     await fs.writeJson(packageJsonPath, packageJson, { spaces: 2 });
@@ -795,6 +846,8 @@ async function createDeploymentScripts(projectPath: string, options: ProjectOpti
 async function createGitHubActions(projectPath: string, options: ProjectOptions): Promise<void> {
   const actionsDir = path.join(projectPath, '.github', 'workflows');
   await fs.ensureDir(actionsDir);
+  
+  const lowercaseRegistryTag = options.registryTag?.toLowerCase() || options.projectName.toLowerCase();
   
   const prodWorkflow = `name: Deploy to Production
 
@@ -826,7 +879,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${options.registryTag || options.projectName}
+          tags: ${lowercaseRegistryTag}
           
       - name: Deploy to Coolify
         run: |
@@ -863,23 +916,103 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${options.registryTag?.replace(':latest', ':dev') || options.projectName + ':dev'}
+          tags: ${lowercaseRegistryTag.replace(':latest', ':dev')}
           
       - name: Deploy to Coolify Dev
         run: |
           curl -X POST "\${{ secrets.COOLIFY_DEV_WEBHOOK_URL }}"
 `;
 
+  const prWorkflow = `name: PR Preview Deployment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_target:
+    types: [closed]
+
+jobs:
+  deploy-preview:
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed' && false # Disabled by default
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Login to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: \${{ secrets.DOCKER_REGISTRY }}
+          username: \${{ secrets.DOCKER_USERNAME }}
+          password: \${{ secrets.DOCKER_PASSWORD }}
+          
+      - name: Build and push PR image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${lowercaseRegistryTag.replace(':latest', '')}:pr-\${{ github.event.number }}
+          
+      - name: Create PR deployment in Coolify
+        run: |
+          # Create a new deployment for this PR
+          curl -X POST "\${{ secrets.COOLIFY_API_URL }}/api/v1/projects/\${{ secrets.COOLIFY_PROJECT_ID }}/services" \\
+            -H "Authorization: Bearer \${{ secrets.COOLIFY_API_TOKEN }}" \\
+            -H "Content-Type: application/json" \\
+            -d '{
+              "name": "pr-\${{ github.event.number }}",
+              "image": "${lowercaseRegistryTag.replace(':latest', '')}:pr-\${{ github.event.number }}",
+              "type": "service"
+            }'
+          
+      - name: Comment PR with preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '🚀 Preview deployment created! Will be available at: https://pr-' + context.issue.number + '.your-domain.com'
+            })
+
+  cleanup-preview:
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed' && false # Disabled by default
+    
+    steps:
+      - name: Delete PR deployment
+        run: |
+          # Delete the PR deployment from Coolify
+          curl -X DELETE "\${{ secrets.COOLIFY_API_URL }}/api/v1/services/pr-\${{ github.event.number }}" \\
+            -H "Authorization: Bearer \${{ secrets.COOLIFY_API_TOKEN }}"
+          
+      - name: Comment PR about cleanup
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '🧹 PR preview deployment has been cleaned up.'
+            })
+`;
+
   await fs.writeFile(path.join(actionsDir, 'deploy-prod.yml'), prodWorkflow);
   await fs.writeFile(path.join(actionsDir, 'deploy-dev.yml'), devWorkflow);
+  await fs.writeFile(path.join(actionsDir, 'deploy-pr.yml'), prWorkflow);
   
-  console.log(chalk.green('✓ Created GitHub Actions workflows (disabled by default)'));
+  console.log(chalk.green('✓ Created GitHub Actions workflows with PR deployment support (disabled by default)'));
 }
 
 async function addAdditionalDependencies(projectName: string): Promise<void> {
   console.log(chalk.blue('Adding additional dependencies...'));
   
-  const projectPath = path.join(process.cwd(), projectName);
+  const projectPath = projectName === '.' ? process.cwd() : path.join(process.cwd(), projectName);
   
   try {
     // Install ESLint, Prettier, and Tailwind CSS
@@ -887,7 +1020,9 @@ async function addAdditionalDependencies(projectName: string): Promise<void> {
     
     // Change to project directory
     const originalCwd = process.cwd();
-    process.chdir(projectPath);
+    if (projectName !== '.') {
+      process.chdir(projectPath);
+    }
     
     // Install Tailwind CSS and PostCSS
     await executeCommand('npm install -D tailwindcss postcss autoprefixer @tailwindcss/typography');
@@ -918,8 +1053,10 @@ async function addAdditionalDependencies(projectName: string): Promise<void> {
     
     console.log(chalk.green('✓ Additional dependencies installed successfully'));
     
-    // Return to original directory
-    process.chdir(originalCwd);
+    // Return to original directory if we changed
+    if (projectName !== '.') {
+      process.chdir(originalCwd);
+    }
     
   } catch (error: any) {
     console.error(chalk.red('Failed to add additional dependencies:'), error.message);
@@ -927,9 +1064,11 @@ async function addAdditionalDependencies(projectName: string): Promise<void> {
     console.log(chalk.yellow('  npm install -D tailwindcss postcss autoprefixer'));
     console.log(chalk.yellow('  npx tailwindcss init -p'));
     
-    // Return to original directory
-    const originalCwd = process.cwd();
-    process.chdir(originalCwd);
+    // Return to original directory if we changed
+    if (projectName !== '.') {
+      const originalCwd = process.cwd();
+      process.chdir(originalCwd);
+    }
   }
 }
 
