@@ -337,35 +337,21 @@ async function createSvelteKitProject(options: ProjectOptions): Promise<void> {
       throw new Error(`Directory ${options.projectName} already exists`);
     }
     
-    // For automation, we'll provide instructions and create a basic SvelteKit project structure
-    // Since sv create is interactive, we'll provide clear instructions to the user
-    console.log(chalk.yellow('\n📋 Please run the following command and select these options:'));
-    console.log(chalk.cyan(`npx sv create ${options.projectName}`));
-    console.log(chalk.yellow('\nWhen prompted, please select:'));
-    console.log(chalk.yellow('- Which Svelte app template? → SvelteKit minimal'));
-    console.log(chalk.yellow('- Add type checking with TypeScript? → Yes, using TypeScript syntax'));
-    console.log(chalk.yellow('- Select additional options:'));
-    console.log(chalk.yellow('  ✓ Add ESLint for code linting'));
-    console.log(chalk.yellow('  ✓ Add Prettier for code formatting'));
-    console.log(chalk.yellow('  ✓ Add Tailwind CSS for styling'));
-    console.log(chalk.yellow('  ✓ Add Playwright for browser testing (optional)'));
-    console.log(chalk.yellow('  ✓ Add Vitest for unit testing (optional)'));
+    // Execute sv create with automated options
+    const svCreateCommand = [
+      'npx', 'sv', 'create', options.projectName,
+      '--template', 'minimal',
+      '--types', 'ts',
+      '--no-add-ons',
+      '--install', 'npm'
+    ];
     
-    // Wait for user confirmation
-    const { proceed } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'proceed',
-      message: 'Have you created the SvelteKit project with the options above?',
-      default: false
-    }]);
-    
-    if (!proceed) {
-      throw new Error('SvelteKit project creation cancelled');
-    }
+    console.log(chalk.blue(`Running: ${svCreateCommand.join(' ')}`));
+    await executeCommandAsync('npx', ['sv', 'create', options.projectName, '--template', 'minimal', '--types', 'ts', '--no-add-ons', '--install', 'npm']);
     
     // Verify the project was created
     if (!await fs.pathExists(options.projectName)) {
-      throw new Error(`Project directory ${options.projectName} not found. Please create the SvelteKit project first.`);
+      throw new Error(`Project directory ${options.projectName} not found after sv create.`);
     }
     
     // Verify it's a SvelteKit project
@@ -379,7 +365,11 @@ async function createSvelteKitProject(options: ProjectOptions): Promise<void> {
       throw new Error('Invalid SvelteKit project: @sveltejs/kit not found in devDependencies');
     }
     
-    console.log(chalk.green(`✓ SvelteKit project verified: ${options.projectName}`));
+    console.log(chalk.green(`✓ SvelteKit project created and verified: ${options.projectName}`));
+    
+    // Add additional dependencies that we want
+    await addAdditionalDependencies(options.projectName);
+    
   } catch (error: any) {
     console.error(chalk.red('Failed to create SvelteKit project:'), error.message);
     throw error;
@@ -884,4 +874,95 @@ jobs:
   await fs.writeFile(path.join(actionsDir, 'deploy-dev.yml'), devWorkflow);
   
   console.log(chalk.green('✓ Created GitHub Actions workflows (disabled by default)'));
+}
+
+async function addAdditionalDependencies(projectName: string): Promise<void> {
+  console.log(chalk.blue('Adding additional dependencies...'));
+  
+  const projectPath = path.join(process.cwd(), projectName);
+  
+  try {
+    // Install ESLint, Prettier, and Tailwind CSS
+    console.log(chalk.blue('Installing ESLint, Prettier, and Tailwind CSS...'));
+    
+    // Change to project directory
+    const originalCwd = process.cwd();
+    process.chdir(projectPath);
+    
+    // Install Tailwind CSS and PostCSS
+    await executeCommand('npm install -D tailwindcss postcss autoprefixer @tailwindcss/typography');
+    
+    // Initialize Tailwind CSS config
+    try {
+      await executeCommand('npx tailwindcss init -p');
+    } catch (error) {
+      // If init fails, create config manually
+      await configureTailwindCSS();
+    }
+    
+    // Install ESLint if not already present
+    const packageJson = await fs.readJson('package.json');
+    if (!packageJson.devDependencies['eslint']) {
+      await executeCommand('npm install -D eslint @typescript-eslint/eslint-parser @typescript-eslint/parser');
+    }
+    
+    // Install Prettier if not already present
+    if (!packageJson.devDependencies['prettier']) {
+      await executeCommand('npm install -D prettier prettier-plugin-svelte');
+    }
+    
+    // Configure Tailwind CSS if not already done
+    if (!await fs.pathExists('tailwind.config.js')) {
+      await configureTailwindCSS();
+    }
+    
+    console.log(chalk.green('✓ Additional dependencies installed successfully'));
+    
+    // Return to original directory
+    process.chdir(originalCwd);
+    
+  } catch (error: any) {
+    console.error(chalk.red('Failed to add additional dependencies:'), error.message);
+    console.log(chalk.yellow('You can add these manually later:'));
+    console.log(chalk.yellow('  npm install -D tailwindcss postcss autoprefixer'));
+    console.log(chalk.yellow('  npx tailwindcss init -p'));
+    
+    // Return to original directory
+    const originalCwd = process.cwd();
+    process.chdir(originalCwd);
+  }
+}
+
+async function configureTailwindCSS(): Promise<void> {
+  // Update tailwind.config.js
+  const tailwindConfig = `/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./src/**/*.{html,js,svelte,ts}'],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+}
+`;
+  
+  await fs.writeFile('tailwind.config.js', tailwindConfig);
+  
+  // Create or update app.css
+  const appCssPath = path.join('src', 'app.css');
+  const tailwindImports = `@tailwind base;
+@tailwind components;
+@tailwind utilities;
+`;
+  
+  // Check if app.css exists and prepend Tailwind imports
+  if (await fs.pathExists(appCssPath)) {
+    const existingCss = await fs.readFile(appCssPath, 'utf8');
+    if (!existingCss.includes('@tailwind')) {
+      await fs.writeFile(appCssPath, tailwindImports + '\n' + existingCss);
+    }
+  } else {
+    await fs.writeFile(appCssPath, tailwindImports);
+  }
+  
+  console.log(chalk.green('✓ Tailwind CSS configured'));
 }
