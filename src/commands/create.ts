@@ -112,16 +112,19 @@ async function getProjectOptions(): Promise<ProjectOptions> {
       {
         type: 'input',
         name: 'coolifyUrl',
-        message: 'Coolify URL:',
+        message: 'Coolify URL (e.g., https://coolify.yourserver.com):',
         validate: (input: string) => {
           if (!input.trim()) {
             return 'Coolify URL is required';
           }
           try {
-            new URL(input);
+            const url = new URL(input);
+            if (!url.protocol.startsWith('http')) {
+              return 'URL must start with http:// or https://';
+            }
             return true;
           } catch {
-            return 'Please enter a valid URL';
+            return 'Please enter a valid URL (e.g., https://coolify.yourserver.com)';
           }
         }
       },
@@ -139,10 +142,13 @@ async function getProjectOptions(): Promise<ProjectOptions> {
       {
         type: tokenInputType,
         name: 'coolifyApiToken',
-        message: 'Coolify API Token:',
+        message: 'Coolify API Token (generate in Settings → API Tokens):',
         validate: (input: string) => {
           if (!input.trim()) {
             return 'API token is required';
+          }
+          if (input.trim().length < 10) {
+            return 'API token seems too short. Please check and try again.';
           }
           return true;
         }
@@ -285,7 +291,7 @@ async function setupTauriIntegration(options: ProjectOptions): Promise<void> {
     
     // Initialize Tauri
     console.log(chalk.blue('Initializing Tauri...'));
-    await executeCommand('npx tauri init --yes');
+    await executeCommand('npx tauri init');
     
     // Set up Android if selected
     if (options.tauriPlatforms.includes('android')) {
@@ -417,8 +423,8 @@ async function createSvelteKitProject(options: ProjectOptions): Promise<void> {
     
     // Execute sv create with automated options
     const svCreateArgs = options.createInCurrentDir 
-      ? ['sv', 'create', '.', '--template', 'minimal', '--types', 'ts', '--no-add-ons', '--install', 'npm']
-      : ['sv', 'create', options.projectName, '--template', 'minimal', '--types', 'ts', '--no-add-ons', '--install', 'npm'];
+      ? ['sv', 'create', '.', '--template', 'minimal', '--types', 'ts']
+      : ['sv', 'create', options.projectName, '--template', 'minimal', '--types', 'ts'];
     
     console.log(chalk.blue(`Running: npx ${svCreateArgs.join(' ')}`));
     await executeCommandAsync('npx', svCreateArgs);
@@ -440,8 +446,7 @@ async function createSvelteKitProject(options: ProjectOptions): Promise<void> {
     
     console.log(chalk.green(`✓ SvelteKit project created and verified: ${options.createInCurrentDir ? 'current directory' : options.projectName}`));
     
-    // Add additional dependencies that we want
-    await addAdditionalDependencies(options.createInCurrentDir ? '.' : options.projectName);
+    // Note: Dependencies are not automatically installed. Users can install them manually as needed.
     
   } catch (error: any) {
     console.error(chalk.red('Failed to create SvelteKit project:'), error.message);
@@ -455,6 +460,8 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
   }
 
   console.log(chalk.blue('Setting up comprehensive Coolify deployment...'));
+  console.log(chalk.gray(`Using Coolify URL: ${options.coolifyUrl}`));
+  console.log(chalk.gray(`API Token: ${options.coolifyApiToken.substring(0, 10)}...`));
   
   try {
     const coolify = new CoolifyClient(options.coolifyUrl, options.coolifyApiToken);
@@ -563,7 +570,22 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
     
   } catch (error: any) {
     console.error(chalk.red('Failed to set up comprehensive Coolify deployment:'), error.message);
-    console.log(chalk.yellow('You can set up Coolify deployment manually later.'));
+    
+    // Provide specific guidance based on common error patterns
+    if (error.message.includes('connect to Coolify API')) {
+      console.log(chalk.yellow('\n🔧 Connection troubleshooting:'));
+      console.log(chalk.yellow('   1. Verify your Coolify instance is running and accessible'));
+      console.log(chalk.yellow('   2. Check if the URL format is correct (e.g., https://coolify.yourserver.com)'));
+      console.log(chalk.yellow('   3. Ensure your API token is valid and not expired'));
+      console.log(chalk.yellow('   4. Check firewall/network settings if using a remote server'));
+    } else if (error.message.includes('401') || error.message.includes('Unauthorized')) {
+      console.log(chalk.yellow('\n🔑 Authentication troubleshooting:'));
+      console.log(chalk.yellow('   1. Generate a new API token in Coolify dashboard'));
+      console.log(chalk.yellow('   2. Ensure the token has project creation permissions'));
+      console.log(chalk.yellow('   3. Copy the token carefully without extra spaces or characters'));
+    }
+    
+    console.log(chalk.yellow('\nYou can set up Coolify deployment manually later.'));
     console.log(chalk.yellow('The project files will still be generated with Docker support.'));
     
     // Still save credentials to .env even if Coolify setup fails
@@ -1426,123 +1448,3 @@ jobs:
   console.log(chalk.green('✓ Created GitHub Actions workflows with PR deployment support (disabled by default)'));
 }
 
-async function addAdditionalDependencies(projectName: string): Promise<void> {
-  console.log(chalk.blue('Adding SvelteKit packages with sv add...'));
-  
-  const projectPath = projectName === '.' ? process.cwd() : path.join(process.cwd(), projectName);
-  
-  try {
-    // Change to project directory
-    const originalCwd = process.cwd();
-    if (projectName !== '.') {
-      process.chdir(projectPath);
-    }
-    
-    console.log(chalk.blue('Installing Tailwind CSS with sv add...'));
-    await executeCommandAsync('npx', ['sv', 'add', 'tailwindcss']);
-    console.log(chalk.green('✓ Tailwind CSS installed via sv add'));
-    
-    console.log(chalk.blue('Installing ESLint with sv add...'));
-    await executeCommandAsync('npx', ['sv', 'add', 'eslint']);
-    console.log(chalk.green('✓ ESLint installed via sv add'));
-    
-    console.log(chalk.blue('Installing Prettier with sv add...'));
-    await executeCommandAsync('npx', ['sv', 'add', 'prettier']);
-    console.log(chalk.green('✓ Prettier installed via sv add'));
-    
-    console.log(chalk.blue('Installing Vitest for testing with sv add...'));
-    await executeCommandAsync('npx', ['sv', 'add', 'vitest']);
-    console.log(chalk.green('✓ Vitest installed via sv add'));
-    
-    // Remove the separate npm install step since sv add handles it
-    console.log(chalk.green('✓ All SvelteKit packages installed successfully with sv add'));
-    
-    // Return to original directory if we changed
-    if (projectName !== '.') {
-      process.chdir(originalCwd);
-    }
-    
-  } catch (error: any) {
-    console.error(chalk.red('Failed to add packages with sv add:'), error.message);
-    console.log(chalk.yellow('Falling back to manual installation...'));
-    
-    // Fallback to manual installation
-    try {
-      // Install Tailwind CSS and PostCSS
-      await executeCommand('npm install -D tailwindcss postcss autoprefixer @tailwindcss/typography @tailwindcss/forms');
-      
-      // Initialize Tailwind CSS config
-      try {
-        await executeCommand('npx tailwindcss init -p');
-      } catch (error) {
-        // If init fails, create config manually
-        await configureTailwindCSS();
-      }
-      
-      // Install ESLint if not already present
-      const packageJson = await fs.readJson('package.json');
-      if (!packageJson.devDependencies || !packageJson.devDependencies['eslint']) {
-        await executeCommand('npm install -D eslint @typescript-eslint/eslint-parser @typescript-eslint/parser');
-      }
-      
-      // Install Prettier if not already present
-      if (!packageJson.devDependencies || !packageJson.devDependencies['prettier']) {
-        await executeCommand('npm install -D prettier prettier-plugin-svelte');
-      }
-      
-      // Configure Tailwind CSS if not already done
-      if (!await fs.pathExists('tailwind.config.js')) {
-        await configureTailwindCSS();
-      }
-      
-      console.log(chalk.green('✓ Packages installed manually as fallback'));
-    } catch (fallbackError: any) {
-      console.error(chalk.red('Manual installation also failed:'), fallbackError.message);
-      console.log(chalk.yellow('You can add these manually later:'));
-      console.log(chalk.yellow('  npx sv add tailwindcss'));
-      console.log(chalk.yellow('  npx sv add eslint'));
-      console.log(chalk.yellow('  npx sv add prettier'));
-      console.log(chalk.yellow('  npx sv add vitest'));
-    }
-    
-    // Return to original directory if we changed
-    if (projectName !== '.') {
-      const originalCwd = process.cwd();
-      process.chdir(originalCwd);
-    }
-  }
-}
-
-async function configureTailwindCSS(): Promise<void> {
-  // Update tailwind.config.js
-  const tailwindConfig = `/** @type {import('tailwindcss').Config} */
-export default {
-  content: ['./src/**/*.{html,js,svelte,ts}'],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-}
-`;
-  
-  await fs.writeFile('tailwind.config.js', tailwindConfig);
-  
-  // Create or update app.css
-  const appCssPath = path.join('src', 'app.css');
-  const tailwindImports = `@tailwind base;
-@tailwind components;
-@tailwind utilities;
-`;
-  
-  // Check if app.css exists and prepend Tailwind imports
-  if (await fs.pathExists(appCssPath)) {
-    const existingCss = await fs.readFile(appCssPath, 'utf8');
-    if (!existingCss.includes('@tailwind')) {
-      await fs.writeFile(appCssPath, tailwindImports + '\n' + existingCss);
-    }
-  } else {
-    await fs.writeFile(appCssPath, tailwindImports);
-  }
-  
-  console.log(chalk.green('✓ Tailwind CSS configured'));
-}
