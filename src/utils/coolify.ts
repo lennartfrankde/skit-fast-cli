@@ -133,6 +133,7 @@ export class CoolifyClient {
       const destinationUuid = await this.getDefaultDestinationUuid();
       
       // Build payload exactly as specified in the problem statement
+      // Only include fields with meaningful values to avoid validation errors
       const payload: DockerImagePayload = {
         project_uuid: projectId,
         server_uuid: serverUuid,
@@ -142,8 +143,6 @@ export class CoolifyClient {
         ports_exposes: '3000',
         name: serviceName,
         description: 'SvelteKit application service',
-        domains: '',
-        ports_mappings: '',
         health_check_enabled: true,
         health_check_path: '/health',
         health_check_port: '3000',
@@ -151,34 +150,15 @@ export class CoolifyClient {
         health_check_method: 'GET',
         health_check_return_code: 200,
         health_check_scheme: 'http',
-        health_check_response_text: '',
         health_check_interval: 30,
         health_check_timeout: 10,
         health_check_retries: 3,
         health_check_start_period: 0,
-        limits_memory: '',
-        limits_memory_swap: '',
         limits_memory_swappiness: 0,
-        limits_memory_reservation: '',
-        limits_cpus: '',
-        limits_cpuset: '',
         limits_cpu_shares: 0,
-        custom_labels: '',
-        custom_docker_run_options: '',
-        post_deployment_command: '',
-        post_deployment_command_container: '',
-        pre_deployment_command: '',
-        pre_deployment_command_container: '',
-        manual_webhook_secret_github: '',
-        manual_webhook_secret_gitlab: '',
-        manual_webhook_secret_bitbucket: '',
-        manual_webhook_secret_gitea: '',
-        redirect: '',
         instant_deploy: true,
         use_build_server: true,
-        is_http_basic_auth_enabled: true,
-        http_basic_auth_username: '',
-        http_basic_auth_password: '',
+        is_http_basic_auth_enabled: false,
         connect_to_docker_network: true
       };
       
