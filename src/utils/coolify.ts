@@ -1,9 +1,10 @@
 import axios, { AxiosInstance } from 'axios';
 import chalk from 'chalk';
-import { CoolifyProject, CoolifyService, ProjectOptions } from '../types';
+import { CoolifyProject, CoolifyService, ProjectOptions, DockerImagePayload } from '../types';
 
 export class CoolifyClient {
   private client: AxiosInstance;
+  private useProductionEnvironment: boolean = false;
 
   constructor(baseUrl: string, apiToken: string) {
     // Ensure the URL doesn't end with a slash and doesn't include /api/v1
@@ -25,6 +26,98 @@ export class CoolifyClient {
       },
       timeout: 30000 // 30 second timeout
     });
+  }
+
+  /**
+   * Parse Docker image into registry name and tag
+   */
+  private parseDockerImage(dockerImage: string): { name: string; tag: string } {
+    // Find the last colon that's not part of a port (i.e., after a slash)
+    const lastSlashIndex = dockerImage.lastIndexOf('/');
+    const searchStartIndex = lastSlashIndex === -1 ? 0 : lastSlashIndex;
+    const colonIndex = dockerImage.lastIndexOf(':', dockerImage.length);
+    
+    // If no colon found after the last slash, or colon is before the last slash (part of hostname:port)
+    if (colonIndex === -1 || colonIndex < searchStartIndex) {
+      return { name: dockerImage, tag: 'latest' };
+    }
+    
+    const name = dockerImage.substring(0, colonIndex);
+    const tag = dockerImage.substring(colonIndex + 1);
+    
+    // Check if the tag contains a slash, which would indicate it's actually part of the path
+    if (tag.includes('/')) {
+      return { name: dockerImage, tag: 'latest' };
+    }
+    
+    return { name, tag };
+  }
+
+  /**
+   * Detect if we should use production environment (default network/environment)
+   */
+  private async detectProductionEnvironment(): Promise<boolean> {
+    try {
+      // Try to get server information to determine environment setup
+      const response = await this.client.get('/api/v1/servers');
+      // If we can access servers directly, we're likely in production mode
+      return Array.isArray(response.data) && response.data.length > 0;
+    } catch (error: any) {
+      // If servers endpoint is not accessible, assume non-production
+      return false;
+    }
+  }
+
+  /**
+   * Get default server UUID for production environment
+   */
+  private async getDefaultServerUuid(): Promise<string | null> {
+    try {
+      const response = await this.client.get('/api/v1/servers');
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        return response.data[0].uuid || response.data[0].id;
+      }
+    } catch (error: any) {
+      console.log(chalk.yellow('Could not retrieve server information'));
+    }
+    return null;
+  }
+
+  /**
+   * Get default environment information for production
+   */
+  private async getDefaultEnvironment(): Promise<{ name: string; uuid: string } | null> {
+    try {
+      const response = await this.client.get('/api/v1/environments');
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        const productionEnv = response.data.find((env: any) => 
+          env.name === 'production' || env.name === 'prod'
+        ) || response.data[0];
+        
+        return {
+          name: productionEnv.name || 'production',
+          uuid: productionEnv.uuid || productionEnv.id
+        };
+      }
+    } catch (error: any) {
+      console.log(chalk.yellow('Could not retrieve environment information, using defaults'));
+    }
+    return { name: 'production', uuid: '' };
+  }
+
+  /**
+   * Get default destination UUID for production environment
+   */
+  private async getDefaultDestinationUuid(): Promise<string | null> {
+    try {
+      const response = await this.client.get('/api/v1/destinations');
+      if (Array.isArray(response.data) && response.data.length > 0) {
+        return response.data[0].uuid || response.data[0].id;
+      }
+    } catch (error: any) {
+      console.log(chalk.yellow('Could not retrieve destination information'));
+    }
+    return null;
   }
 
   /**
@@ -243,23 +336,14 @@ export class CoolifyClient {
     try {
       console.log(chalk.blue(`Creating SvelteKit service with image: ${dockerImage}`));
       
-      const payload = {
-        name: serviceName,
-        description: `SvelteKit application service`,
-        docker_image: dockerImage,
-        ports_exposes: '3000',
-        environment_variables: [
-          { key: 'NODE_ENV', value: 'production' },
-          { key: 'PORT', value: '3000' },
-          { key: 'HOST', value: '0.0.0.0' }
-        ]
-      };
-
-      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications/dockerimage`));
-      const response = await this.client.post(`/api/v1/projects/${projectId}/applications/dockerimage`, payload);
+      // Check if we should use production environment format
+      const useProductionFormat = await this.detectProductionEnvironment();
       
-      console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName}`));
-      return response.data;
+      if (useProductionFormat) {
+        return await this.createSvelteKitServiceProduction(projectId, serviceName, dockerImage);
+      } else {
+        return await this.createSvelteKitServiceDevelopment(projectId, serviceName, dockerImage);
+      }
     } catch (error: any) {
       console.error(chalk.red(`Failed to create SvelteKit service: ${serviceName}`));
       
@@ -298,6 +382,104 @@ export class CoolifyClient {
       
       throw error;
     }
+  }
+
+  /**
+   * Create SvelteKit service using production environment format (base route)
+   */
+  private async createSvelteKitServiceProduction(projectId: string, serviceName: string, dockerImage: string): Promise<CoolifyService> {
+    console.log(chalk.blue('Using production environment format'));
+    
+    const { name: registryImageName, tag: registryImageTag } = this.parseDockerImage(dockerImage);
+    
+    // Get environment information for production setup
+    const serverUuid = await this.getDefaultServerUuid();
+    const environment = await this.getDefaultEnvironment();
+    const destinationUuid = await this.getDefaultDestinationUuid();
+    
+    const payload: DockerImagePayload = {
+      project_uuid: projectId,
+      server_uuid: serverUuid || '',
+      environment_name: environment?.name || 'production',
+      environment_uuid: environment?.uuid || '',
+      docker_registry_image_name: registryImageName,
+      docker_registry_image_tag: registryImageTag,
+      ports_exposes: '3000',
+      destination_uuid: destinationUuid || '',
+      name: serviceName,
+      description: 'SvelteKit application service',
+      domains: '',
+      ports_mappings: '',
+      health_check_enabled: true,
+      health_check_path: '/',
+      health_check_port: '3000',
+      health_check_host: '0.0.0.0',
+      health_check_method: 'GET',
+      health_check_return_code: 200,
+      health_check_scheme: 'http',
+      health_check_response_text: '',
+      health_check_interval: 30,
+      health_check_timeout: 10,
+      health_check_retries: 3,
+      health_check_start_period: 30,
+      limits_memory: '',
+      limits_memory_swap: '',
+      limits_memory_swappiness: 0,
+      limits_memory_reservation: '',
+      limits_cpus: '',
+      limits_cpuset: '',
+      limits_cpu_shares: 0,
+      custom_labels: '',
+      custom_docker_run_options: '',
+      post_deployment_command: '',
+      post_deployment_command_container: '',
+      pre_deployment_command: '',
+      pre_deployment_command_container: '',
+      manual_webhook_secret_github: '',
+      manual_webhook_secret_gitlab: '',
+      manual_webhook_secret_bitbucket: '',
+      manual_webhook_secret_gitea: '',
+      redirect: '',
+      instant_deploy: true,
+      use_build_server: true,
+      is_http_basic_auth_enabled: false,
+      http_basic_auth_username: '',
+      http_basic_auth_password: '',
+      connect_to_docker_network: true
+    };
+
+    console.log(chalk.gray(`API Request: POST /api/v1/applications/dockerimage`));
+    console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
+    
+    const response = await this.client.post('/api/v1/applications/dockerimage', payload);
+    
+    console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (production format)`));
+    return response.data;
+  }
+
+  /**
+   * Create SvelteKit service using development/project-specific format
+   */
+  private async createSvelteKitServiceDevelopment(projectId: string, serviceName: string, dockerImage: string): Promise<CoolifyService> {
+    console.log(chalk.blue('Using development/project-specific format'));
+    
+    const payload = {
+      name: serviceName,
+      description: `SvelteKit application service`,
+      docker_image: dockerImage,
+      ports_exposes: '3000',
+      environment_variables: [
+        { key: 'NODE_ENV', value: 'production' },
+        { key: 'PORT', value: '3000' },
+        { key: 'HOST', value: '0.0.0.0' }
+      ]
+    };
+
+    console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications/dockerimage`));
+    const response = await this.client.post(`/api/v1/projects/${projectId}/applications/dockerimage`, payload);
+    
+    console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (development format)`));
+    return response.data;
   }
 
   async getServiceWebhook(projectId: string, serviceId: string): Promise<string | null> {
