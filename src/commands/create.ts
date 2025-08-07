@@ -417,8 +417,8 @@ async function createSvelteKitProject(options: ProjectOptions): Promise<void> {
     
     // Execute sv create with automated options
     const svCreateArgs = options.createInCurrentDir 
-      ? ['sv', 'create', '.', '--template', 'minimal', '--types', 'ts', '--no-add-ons']
-      : ['sv', 'create', options.projectName, '--template', 'minimal', '--types', 'ts', '--no-add-ons'];
+      ? ['sv', 'create', '.', '--template', 'minimal', '--types', 'ts']
+      : ['sv', 'create', options.projectName, '--template', 'minimal', '--types', 'ts'];
     
     console.log(chalk.blue(`Running: npx ${svCreateArgs.join(' ')}`));
     await executeCommandAsync('npx', svCreateArgs);
