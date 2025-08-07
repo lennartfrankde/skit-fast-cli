@@ -13,7 +13,14 @@ export function executeCommand(command: string, options: { cwd?: string; stdio?:
     return result.toString().trim();
   } catch (error: any) {
     console.error(chalk.red(`Error executing command: ${command}`));
-    console.error(chalk.red(error.message));
+    console.error(chalk.red(`Command failed: ${command}`));
+    if (error.stdout) {
+      console.error(chalk.yellow(`STDOUT: ${error.stdout}`));
+    }
+    if (error.stderr) {
+      console.error(chalk.red(`STDERR: ${error.stderr}`));
+    }
+    console.error(chalk.red(`       Error ${error.message}`));
     throw error;
   }
 }

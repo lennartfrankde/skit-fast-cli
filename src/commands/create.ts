@@ -289,9 +289,21 @@ async function setupTauriIntegration(options: ProjectOptions): Promise<void> {
     await executeCommand('npm install --save-dev @tauri-apps/cli');
     await executeCommand('npm install @tauri-apps/api');
     
-    // Initialize Tauri
+    // Initialize Tauri with non-interactive mode
     console.log(chalk.blue('Initializing Tauri...'));
-    await executeCommand('npx tauri init');
+    try {
+      // Try non-interactive initialization first
+      await executeCommand('npx tauri init --ci');
+    } catch (ciError: any) {
+      // If --ci flag not available, try with predefined answers
+      try {
+        await executeCommand(`echo -e "\\n\\n\\n\\n\\n" | npx tauri init`);
+      } catch (pipeError: any) {
+        // If piping doesn't work, try a different approach
+        console.log(chalk.yellow('⚠️ Interactive Tauri init detected. Using manual configuration...'));
+        await createTauriConfigManually(options);
+      }
+    }
     
     // Set up Android if selected
     if (options.tauriPlatforms.includes('android')) {
@@ -369,6 +381,127 @@ async function updatePackageJsonWithTauriScripts(options: ProjectOptions): Promi
     await fs.writeJson(packageJsonPath, packageJson, { spaces: 2 });
     console.log(chalk.green('✓ Added Tauri scripts to package.json'));
   }
+}
+
+async function createTauriConfigManually(options: ProjectOptions): Promise<void> {
+  console.log(chalk.blue('Creating Tauri configuration manually...'));
+  
+  const srcTauriDir = path.join(process.cwd(), 'src-tauri');
+  await fs.ensureDir(srcTauriDir);
+  
+  // Create Cargo.toml
+  const cargoToml = `[package]
+name = "${options.projectName.toLowerCase().replace(/[^a-z0-9]/g, '-')}"
+version = "0.0.0"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "1.0", features = [] }
+
+[dependencies]
+tauri = { version = "1.0", features = ["api-all"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[features]
+# this feature is used for production builds or when \`devPath\` points to the filesystem
+# DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
+`;
+
+  await fs.writeFile(path.join(srcTauriDir, 'Cargo.toml'), cargoToml);
+  console.log(chalk.green('✓ Created Cargo.toml'));
+
+  // Create main.rs
+  const srcDir = path.join(srcTauriDir, 'src');
+  await fs.ensureDir(srcDir);
+  
+  const mainRs = `// Prevents additional console window on Windows in release, DO NOT REMOVE!!
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+fn main() {
+    tauri::Builder::default()
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+`;
+
+  await fs.writeFile(path.join(srcDir, 'main.rs'), mainRs);
+  console.log(chalk.green('✓ Created main.rs'));
+
+  // Create tauri.conf.json
+  const tauriConfig = {
+    build: {
+      beforeDevCommand: "npm run dev",
+      beforeBuildCommand: "npm run build",
+      devPath: "http://localhost:5173",
+      distDir: "../build",
+      withGlobalTauri: false
+    },
+    package: {
+      productName: options.projectName,
+      version: "0.0.0"
+    },
+    tauri: {
+      allowlist: {
+        all: false,
+        shell: {
+          all: false,
+          open: true
+        }
+      },
+      bundle: {
+        active: true,
+        targets: "all",
+        identifier: `com.${options.projectName.toLowerCase().replace(/[^a-z0-9]/g, '')}.app`,
+        icon: [
+          "icons/32x32.png",
+          "icons/128x128.png",
+          "icons/128x128@2x.png",
+          "icons/icon.icns",
+          "icons/icon.ico"
+        ]
+      },
+      security: {
+        csp: null
+      },
+      windows: [
+        {
+          fullscreen: false,
+          resizable: true,
+          title: options.projectName,
+          width: 800,
+          height: 600
+        }
+      ]
+    }
+  };
+
+  await fs.writeJson(path.join(srcTauriDir, 'tauri.conf.json'), tauriConfig, { spaces: 2 });
+  console.log(chalk.green('✓ Created tauri.conf.json'));
+
+  // Create build.rs
+  const buildRs = `fn main() {
+    tauri_build::build()
+}
+`;
+
+  await fs.writeFile(path.join(srcTauriDir, 'build.rs'), buildRs);
+  console.log(chalk.green('✓ Created build.rs'));
+
+  // Create icons directory (optional)
+  const iconsDir = path.join(srcTauriDir, 'icons');
+  await fs.ensureDir(iconsDir);
+  console.log(chalk.green('✓ Created icons directory'));
+  
+  console.log(chalk.green('✅ Tauri configuration created manually'));
+  console.log(chalk.yellow('Note: You may need to add app icons to src-tauri/icons/ directory'));
 }
 
 async function createTauriConfigAdjustments(options: ProjectOptions): Promise<void> {
@@ -478,6 +611,13 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
     const projectName = options.projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
     console.log(chalk.blue(`Creating Coolify project: ${projectName}...`));
     const project = await coolify.createProject(projectName, `Auto-created SvelteKit project with full infrastructure`);
+    
+    // Validate project creation
+    if (!project || !project.id) {
+      throw new Error('Failed to create project: Invalid response from Coolify API');
+    }
+    
+    console.log(chalk.green(`✓ Created Coolify project: ${projectName} (ID: ${project.id})`));
     
     // Set up complete project infrastructure using the new comprehensive method
     console.log(chalk.blue('Setting up complete project infrastructure...'));
@@ -596,10 +736,25 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
   }
 }
 
-async function createEnvironmentFile(projectName: string, envVars: Record<string, string>, coolifyUrl?: string, coolifyApiToken?: string): Promise<void> {
-  const envPath = projectName === '.' 
-    ? path.join(process.cwd(), '.env')
-    : path.join(process.cwd(), projectName, '.env');
+async function createEnvironmentFile(projectDir: string, envVars: Record<string, string>, coolifyUrl?: string, coolifyApiToken?: string): Promise<void> {
+  // Ensure we have the correct absolute path for the .env file
+  let envPath: string;
+  
+  if (projectDir === '.') {
+    // Creating in current directory
+    envPath = path.join(process.cwd(), '.env');
+  } else if (path.isAbsolute(projectDir)) {
+    // Absolute path provided
+    envPath = path.join(projectDir, '.env');
+  } else {
+    // Relative path - join with current working directory
+    envPath = path.join(process.cwd(), projectDir, '.env');
+  }
+  
+  console.log(chalk.gray(`Creating .env file at: ${envPath}`));
+  
+  // Ensure the directory exists
+  await fs.ensureDir(path.dirname(envPath));
   
   // Create base environment variables with sensible defaults
   const baseEnvVars: Record<string, string> = {
