@@ -6,28 +6,59 @@ export class CoolifyClient {
   private client: AxiosInstance;
 
   constructor(baseUrl: string, apiToken: string) {
+    // Ensure the URL doesn't end with a slash and doesn't include /api/v1
+    let cleanUrl = baseUrl.trim();
+    if (cleanUrl.endsWith('/')) {
+      cleanUrl = cleanUrl.slice(0, -1);
+    }
+    // Remove /api/v1 if it's already included to avoid duplication
+    if (cleanUrl.endsWith('/api/v1')) {
+      cleanUrl = cleanUrl.replace('/api/v1', '');
+    }
+    
     this.client = axios.create({
-      baseURL: baseUrl,
+      baseURL: cleanUrl,
       headers: {
         'Authorization': `Bearer ${apiToken}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json'
-      }
+      },
+      timeout: 30000 // 30 second timeout
     });
   }
 
   async testConnection(): Promise<boolean> {
     try {
-      await this.client.get('/api/v1/teams');
+      console.log(chalk.blue(`Testing connection to: ${this.client.defaults.baseURL}/api/v1/teams`));
+      const response = await this.client.get('/api/v1/teams');
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error(chalk.red('Failed to connect to Coolify API'));
+      console.error(chalk.red(`URL attempted: ${this.client.defaults.baseURL}/api/v1/teams`));
+      
+      if (error.response) {
+        console.error(chalk.red(`HTTP Status: ${error.response.status}`));
+        console.error(chalk.red(`Response: ${JSON.stringify(error.response.data, null, 2)}`));
+      } else if (error.request) {
+        console.error(chalk.red('No response received. Check if the URL is correct and the server is running.'));
+        console.error(chalk.red(`Request details: ${error.message}`));
+      } else {
+        console.error(chalk.red(`Error: ${error.message}`));
+      }
+      
+      console.log(chalk.yellow('\n💡 Troubleshooting tips:'));
+      console.log(chalk.yellow('   1. Verify your Coolify URL is correct (e.g., https://coolify.yourserver.com)'));
+      console.log(chalk.yellow('   2. Check that your API token is valid and has proper permissions'));
+      console.log(chalk.yellow('   3. Ensure Coolify is running and accessible from your network'));
+      console.log(chalk.yellow('   4. Try accessing the URL in your browser: ' + this.client.defaults.baseURL));
+      
       return false;
     }
   }
 
   async createProject(name: string, description?: string): Promise<CoolifyProject> {
     try {
+      console.log(chalk.blue(`Creating project "${name}" in Coolify...`));
       const response = await this.client.post('/api/v1/projects', {
         name,
         description: description || `SvelteKit project: ${name}`
@@ -36,7 +67,25 @@ export class CoolifyClient {
       console.log(chalk.green(`✓ Created Coolify project: ${name}`));
       return response.data;
     } catch (error: any) {
-      console.error(chalk.red(`Failed to create project: ${error.response?.data?.message || error.message}`));
+      console.error(chalk.red(`Failed to create project: ${name}`));
+      
+      if (error.response) {
+        console.error(chalk.red(`HTTP Status: ${error.response.status}`));
+        console.error(chalk.red(`Error details: ${JSON.stringify(error.response.data, null, 2)}`));
+        
+        if (error.response.status === 401) {
+          console.log(chalk.yellow('\n💡 This looks like an authentication error. Please check:'));
+          console.log(chalk.yellow('   - Your API token is correct'));
+          console.log(chalk.yellow('   - The token has proper permissions to create projects'));
+        } else if (error.response.status === 422) {
+          console.log(chalk.yellow('\n💡 This looks like a validation error. Please check:'));
+          console.log(chalk.yellow('   - Project name follows Coolify naming conventions'));
+          console.log(chalk.yellow('   - A project with this name doesn\'t already exist'));
+        }
+      } else {
+        console.error(chalk.red(`Request error: ${error.message}`));
+      }
+      
       throw error;
     }
   }

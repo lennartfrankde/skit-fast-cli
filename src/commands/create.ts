@@ -112,16 +112,19 @@ async function getProjectOptions(): Promise<ProjectOptions> {
       {
         type: 'input',
         name: 'coolifyUrl',
-        message: 'Coolify URL:',
+        message: 'Coolify URL (e.g., https://coolify.yourserver.com):',
         validate: (input: string) => {
           if (!input.trim()) {
             return 'Coolify URL is required';
           }
           try {
-            new URL(input);
+            const url = new URL(input);
+            if (!url.protocol.startsWith('http')) {
+              return 'URL must start with http:// or https://';
+            }
             return true;
           } catch {
-            return 'Please enter a valid URL';
+            return 'Please enter a valid URL (e.g., https://coolify.yourserver.com)';
           }
         }
       },
@@ -139,10 +142,13 @@ async function getProjectOptions(): Promise<ProjectOptions> {
       {
         type: tokenInputType,
         name: 'coolifyApiToken',
-        message: 'Coolify API Token:',
+        message: 'Coolify API Token (generate in Settings → API Tokens):',
         validate: (input: string) => {
           if (!input.trim()) {
             return 'API token is required';
+          }
+          if (input.trim().length < 10) {
+            return 'API token seems too short. Please check and try again.';
           }
           return true;
         }
@@ -454,6 +460,8 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
   }
 
   console.log(chalk.blue('Setting up comprehensive Coolify deployment...'));
+  console.log(chalk.gray(`Using Coolify URL: ${options.coolifyUrl}`));
+  console.log(chalk.gray(`API Token: ${options.coolifyApiToken.substring(0, 10)}...`));
   
   try {
     const coolify = new CoolifyClient(options.coolifyUrl, options.coolifyApiToken);
@@ -562,7 +570,22 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
     
   } catch (error: any) {
     console.error(chalk.red('Failed to set up comprehensive Coolify deployment:'), error.message);
-    console.log(chalk.yellow('You can set up Coolify deployment manually later.'));
+    
+    // Provide specific guidance based on common error patterns
+    if (error.message.includes('connect to Coolify API')) {
+      console.log(chalk.yellow('\n🔧 Connection troubleshooting:'));
+      console.log(chalk.yellow('   1. Verify your Coolify instance is running and accessible'));
+      console.log(chalk.yellow('   2. Check if the URL format is correct (e.g., https://coolify.yourserver.com)'));
+      console.log(chalk.yellow('   3. Ensure your API token is valid and not expired'));
+      console.log(chalk.yellow('   4. Check firewall/network settings if using a remote server'));
+    } else if (error.message.includes('401') || error.message.includes('Unauthorized')) {
+      console.log(chalk.yellow('\n🔑 Authentication troubleshooting:'));
+      console.log(chalk.yellow('   1. Generate a new API token in Coolify dashboard'));
+      console.log(chalk.yellow('   2. Ensure the token has project creation permissions'));
+      console.log(chalk.yellow('   3. Copy the token carefully without extra spaces or characters'));
+    }
+    
+    console.log(chalk.yellow('\nYou can set up Coolify deployment manually later.'));
     console.log(chalk.yellow('The project files will still be generated with Docker support.'));
     
     // Still save credentials to .env even if Coolify setup fails
