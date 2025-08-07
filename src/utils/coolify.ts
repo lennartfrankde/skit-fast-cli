@@ -403,67 +403,30 @@ export class CoolifyClient {
   }
 
   /**
-   * Create SvelteKit service using production environment format (base route)
+   * Create SvelteKit service using the correct Coolify API endpoint
    */
   private async createSvelteKitServiceProduction(projectId: string, serviceName: string, dockerImage: string): Promise<CoolifyService> {
-    console.log(chalk.blue('Using production environment format'));
+    console.log(chalk.blue('Creating Docker application using official Coolify API'));
     
     const { name: registryImageName, tag: registryImageTag } = this.parseDockerImage(dockerImage);
     
-    // Get environment information for production setup
+    // Get environment information
     const serverUuid = await this.getDefaultServerUuid();
     const environment = await this.getDefaultEnvironment();
     const destinationUuid = await this.getDefaultDestinationUuid();
     
-    // Build payload with only valid UUID fields to avoid validation errors
-    const payload: any = {
+    // Build payload according to official Coolify API documentation
+    const payload: DockerImagePayload = {
       project_uuid: projectId,
       docker_registry_image_name: registryImageName,
       docker_registry_image_tag: registryImageTag,
       ports_exposes: '3000',
       name: serviceName,
       description: 'SvelteKit application service',
-      domains: '',
-      ports_mappings: '',
-      health_check_enabled: true,
-      health_check_path: '/',
-      health_check_port: '3000',
-      health_check_host: '0.0.0.0',
-      health_check_method: 'GET',
-      health_check_return_code: 200,
-      health_check_scheme: 'http',
-      health_check_response_text: '',
-      health_check_interval: 30,
-      health_check_timeout: 10,
-      health_check_retries: 3,
-      health_check_start_period: 30,
-      limits_memory: '',
-      limits_memory_swap: '',
-      limits_memory_swappiness: 0,
-      limits_memory_reservation: '',
-      limits_cpus: '',
-      limits_cpuset: '',
-      limits_cpu_shares: 0,
-      custom_labels: '',
-      custom_docker_run_options: '',
-      post_deployment_command: '',
-      post_deployment_command_container: '',
-      pre_deployment_command: '',
-      pre_deployment_command_container: '',
-      manual_webhook_secret_github: '',
-      manual_webhook_secret_gitlab: '',
-      manual_webhook_secret_bitbucket: '',
-      manual_webhook_secret_gitea: '',
-      redirect: '',
-      instant_deploy: true,
-      use_build_server: true,
-      is_http_basic_auth_enabled: false,
-      http_basic_auth_username: '',
-      http_basic_auth_password: '',
-      connect_to_docker_network: true
+      instant_deploy: true
     };
 
-    // Only include UUID fields if they have valid values (not null or empty)
+    // Only include optional UUID fields if they have valid values
     if (serverUuid) {
       payload.server_uuid = serverUuid;
     }
@@ -473,20 +436,20 @@ export class CoolifyClient {
       if (environment.uuid) {
         payload.environment_uuid = environment.uuid;
       }
-    } else {
-      payload.environment_name = 'production';
     }
     
     if (destinationUuid) {
       payload.destination_uuid = destinationUuid;
     }
 
-    console.log(chalk.gray(`API Request: POST /api/v1/applications/dockerimage`));
+    // Use the correct API endpoint according to official documentation
+    const endpoint = `/api/v1/projects/${projectId}/applications`;
+    console.log(chalk.gray(`API Request: POST ${endpoint}`));
     console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
     
-    const response = await this.client.post('/api/v1/applications/dockerimage', payload);
+    const response = await this.client.post(endpoint, payload);
     
-    console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (production format)`));
+    console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName}`));
     return response.data;
   }
 
@@ -508,8 +471,8 @@ export class CoolifyClient {
       ]
     };
 
-    console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications/dockerimage`));
-    const response = await this.client.post(`/api/v1/projects/${projectId}/applications/dockerimage`, payload);
+    console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications`));
+    const response = await this.client.post(`/api/v1/projects/${projectId}/applications`, payload);
     
     console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (development format)`));
     return response.data;
@@ -534,10 +497,10 @@ export class CoolifyClient {
       instant_deploy: true
     };
 
-    console.log(chalk.gray(`API Request: POST /api/v1/applications/dockerimage (simplified)`));
+    console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications (simplified)`));
     console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
     
-    const response = await this.client.post('/api/v1/applications/dockerimage', payload);
+    const response = await this.client.post(`/api/v1/projects/${projectId}/applications`, payload);
     
     console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (simplified format)`));
     return response.data;
