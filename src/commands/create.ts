@@ -36,11 +36,19 @@ export async function createProject(): Promise<void> {
   if (!options.createInCurrentDir) {
     console.log(chalk.cyan('  1. cd ' + options.projectName));
     console.log(chalk.cyan('  2. npm install'));
-    console.log(chalk.cyan('  3. npm run dev'));
+    console.log(chalk.cyan('  3. ./setup-dev.sh       # Quick setup script'));
+    console.log(chalk.cyan('     OR npm run dev:setup # Start local services and development server'));
   } else {
     console.log(chalk.cyan('  1. npm install'));
-    console.log(chalk.cyan('  2. npm run dev'));
+    console.log(chalk.cyan('  2. ./setup-dev.sh       # Quick setup script'));
+    console.log(chalk.cyan('     OR npm run dev:setup # Start local services and development server'));
   }
+  
+  console.log(chalk.yellow('\n🚀 Quick local development:'));
+  console.log(chalk.cyan('   ./setup-dev.sh           # One-click setup with guidance'));
+  console.log(chalk.cyan('   npm run services:start   # Start database, cache & AI services'));
+  console.log(chalk.cyan('   npm run dev              # Start SvelteKit dev server'));
+  console.log(chalk.cyan('   npm run services:stop    # Stop all local services'));
   
   if (options.useTauri) {
     const nextStep = options.createInCurrentDir ? '3' : '4';
@@ -52,8 +60,7 @@ export async function createProject(): Promise<void> {
   
   if (options.useCoolify) {
     const step = options.useTauri ? (options.createInCurrentDir ? '5' : '6') : (options.createInCurrentDir ? '3' : '4');
-    console.log(chalk.cyan(`  ${step}. npm run deploy:prod # to deploy to production`));
-    console.log(chalk.cyan(`  ${parseInt(step) + 1}. npm run deploy:dev # to deploy to development`));
+    console.log(chalk.cyan(`  ${step}. npm run deploy:trigger # to trigger Coolify deployment`));
   }
 }
 
@@ -440,9 +447,22 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
     
     console.log(chalk.green(`✅ Created ${infrastructure.services.length} services in Coolify project`));
     
-    // Log service URLs and details
+    // Retrieve webhook URLs for deployment automation
+    console.log(chalk.blue('Retrieving deployment webhook URLs...'));
+    const webhookEnvVars: Record<string, string> = {};
+    
     for (const service of infrastructure.services) {
       console.log(chalk.cyan(`   • ${service.name}: Service created successfully`));
+      
+      // Get webhook URL for SvelteKit app
+      if (service.name === 'app' || service.name.includes('sveltekit')) {
+        const webhookUrl = await coolify.getServiceWebhook(project.id, service.id);
+        if (webhookUrl) {
+          webhookEnvVars.COOLIFY_WEBHOOK_URL = webhookUrl;
+          webhookEnvVars.COOLIFY_DEPLOY_WEBHOOK = webhookUrl;
+          console.log(chalk.green(`✓ Retrieved deployment webhook URL`));
+        }
+      }
     }
     
     // Get comprehensive environment variables including service connection details
@@ -450,7 +470,7 @@ async function setupCoolifyDeployment(options: ProjectOptions): Promise<void> {
     const envVars = await coolify.getEnvironmentVariables(project.id);
     
     // Add service-specific environment variables
-    const serviceEnvVars: Record<string, string> = {};
+    const serviceEnvVars: Record<string, string> = { ...webhookEnvVars };
     
     // Add database connection strings
     if (options.database === 'pocketbase') {
@@ -567,6 +587,13 @@ async function createEnvironmentFile(projectName: string, envVars: Record<string
     ...Object.entries(baseEnvVars)
       .filter(([key]) => key.includes('LITELLM') || key.includes('QDRANT'))
       .map(([key, value]) => `${key}=${value}`),
+    '',
+    '# Local Development Configuration',
+    '# Use these URLs for local development with docker-compose',
+    'DATABASE_URL_LOCAL=http://localhost:8090',
+    'REDIS_URL_LOCAL=redis://localhost:6379',
+    'LITELLM_URL_LOCAL=http://localhost:4000',
+    'QDRANT_URL_LOCAL=http://localhost:6333',
     '',
     '# Other Environment Variables'
   ];
@@ -715,6 +742,20 @@ general_settings:
     // Generate README.md with project-specific content
     await createProjectReadme(projectPath, options);
     
+    // Copy local development setup script
+    const setupScriptPath = path.join(projectPath, 'setup-dev.sh');
+    const templateSetupScript = path.join(templatesDir, 'setup-dev.sh');
+    if (await fs.pathExists(templateSetupScript)) {
+      await fs.copy(templateSetupScript, setupScriptPath);
+      // Make the script executable
+      try {
+        await fs.chmod(setupScriptPath, '755');
+        console.log(chalk.green('✓ Created local development setup script (setup-dev.sh)'));
+      } catch (error) {
+        console.log(chalk.yellow('Warning: Could not make setup script executable'));
+      }
+    }
+    
   } catch (error: any) {
     console.log(chalk.yellow('Warning: Could not copy all template files:'), error.message);
   }
@@ -742,12 +783,55 @@ A fast SvelteKit project created with skit-fast-cli and comprehensive Coolify in
 # Install dependencies
 npm install
 
-# Start development server
-npm run dev
+# One-click local development setup
+./setup-dev.sh
 
-# Build for production
-npm run build
+# Or start services manually:
+npm run services:start    # Start database, cache & AI services
+npm run dev               # Start SvelteKit development server
 \`\`\`
+
+### Quick Setup Script
+
+The easiest way to get started is with the included setup script:
+
+\`\`\`bash
+./setup-dev.sh
+\`\`\`
+
+This script will:
+- Check for Docker installation
+- Start all required local services
+- Display service URLs and next steps
+- Provide helpful commands for development
+
+### Local Development Commands
+
+\`\`\`bash
+# One-click setup with guidance
+./setup-dev.sh
+
+# Manual service management
+npm run services:start   # Start all local services (DB, Redis, AI services)
+npm run services:stop    # Stop all local services  
+npm run services:logs    # View logs from all services
+
+# SvelteKit development
+npm run dev              # Start development server
+npm run build            # Build for production
+npm run preview          # Preview production build
+
+# Development teardown
+npm run dev:teardown     # Stop all services when done
+\`\`\`
+
+### Local Services
+
+When you run \`npm run services:start\`, the following services will be available:
+
+${options.database === 'pocketbase' ? '- **PocketBase**: http://localhost:8090 (Database + Admin UI)' : ''}${options.database === 'mongodb' ? '- **MongoDB**: localhost:27017 (Database)' : ''}${options.useRedis ? '\n- **Redis**: localhost:6379 (Cache)' : ''}${options.services.includes('litellm') ? '\n- **LiteLLM**: http://localhost:4000 (AI Gateway)' : ''}${options.services.includes('qdrant') ? '\n- **Qdrant**: http://localhost:6333 (Vector Database)' : ''}
+
+Your SvelteKit app will automatically connect to these services using the environment variables in \`.env\`.
 ${options.useTauri ? `
 ## Tauri Desktop/Mobile App
 
@@ -917,6 +1001,7 @@ CMD ["node", "build"]
 }
 
 async function createDockerCompose(projectPath: string, options: ProjectOptions): Promise<void> {
+  // Create main docker-compose.yml for production
   let services = `version: '3.8'
 
 services:
@@ -941,13 +1026,59 @@ services:
       - pocketbase_data:/pb_data`;
   }
 
+  if (options.database === 'mongodb') {
+    dependencies.push('mongodb');
+    services += `
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=admin123
+      - MONGO_INITDB_DATABASE=app
+    volumes:
+      - mongodb_data:/data/db`;
+  }
+
   if (options.useRedis) {
     dependencies.push('redis');
     services += `
   redis:
     image: redis:alpine
     ports:
-      - "6379:6379"`;
+      - "6379:6379"
+    command: redis-server --requirepass redis123
+    volumes:
+      - redis_data:/data`;
+  }
+
+  // Add LiteLLM service
+  if (options.services.includes('litellm')) {
+    dependencies.push('litellm');
+    services += `
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    ports:
+      - "4000:4000"
+    environment:
+      - MASTER_KEY=sk-1234
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--host", "0.0.0.0"]`;
+  }
+
+  // Add Qdrant service
+  if (options.services.includes('qdrant')) {
+    dependencies.push('qdrant');
+    services += `
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage`;
   }
 
   if (dependencies.length > 0) {
@@ -958,9 +1089,101 @@ services:
   if (options.database === 'pocketbase') {
     services += '\n  pocketbase_data:';
   }
+  if (options.database === 'mongodb') {
+    services += '\n  mongodb_data:';
+  }
+  if (options.useRedis) {
+    services += '\n  redis_data:';
+  }
+  if (options.services.includes('qdrant')) {
+    services += '\n  qdrant_data:';
+  }
 
   await fs.writeFile(path.join(projectPath, 'docker-compose.yml'), services);
   console.log(chalk.green('✓ Created docker-compose.yml'));
+
+  // Create docker-compose.dev.yml for local development only (no app service)
+  let devServices = `version: '3.8'
+
+services:`;
+
+  const devDependencies: string[] = [];
+
+  if (options.database === 'pocketbase') {
+    devServices += `
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:latest
+    ports:
+      - "8090:8090"
+    volumes:
+      - pocketbase_data:/pb_data`;
+  }
+
+  if (options.database === 'mongodb') {
+    devServices += `
+  mongodb:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=admin123
+      - MONGO_INITDB_DATABASE=app
+    volumes:
+      - mongodb_data:/data/db`;
+  }
+
+  if (options.useRedis) {
+    devServices += `
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass redis123
+    volumes:
+      - redis_data:/data`;
+  }
+
+  if (options.services.includes('litellm')) {
+    devServices += `
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    ports:
+      - "4000:4000"
+    environment:
+      - MASTER_KEY=sk-1234
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--host", "0.0.0.0"]`;
+  }
+
+  if (options.services.includes('qdrant')) {
+    devServices += `
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage`;
+  }
+
+  devServices += '\n\nvolumes:';
+  if (options.database === 'pocketbase') {
+    devServices += '\n  pocketbase_data:';
+  }
+  if (options.database === 'mongodb') {
+    devServices += '\n  mongodb_data:';
+  }
+  if (options.useRedis) {
+    devServices += '\n  redis_data:';
+  }
+  if (options.services.includes('qdrant')) {
+    devServices += '\n  qdrant_data:';
+  }
+
+  await fs.writeFile(path.join(projectPath, 'docker-compose.dev.yml'), devServices);
+  console.log(chalk.green('✓ Created docker-compose.dev.yml for local services'));
 }
 
 async function createDeploymentScripts(projectPath: string, options: ProjectOptions): Promise<void> {
@@ -972,17 +1195,31 @@ async function createDeploymentScripts(projectPath: string, options: ProjectOpti
     
     const lowercaseRegistryTag = options.registryTag?.toLowerCase() || options.projectName.toLowerCase();
     
-    packageJson.scripts = {
+    // Base scripts for all projects
+    const baseScripts = {
       ...packageJson.scripts,
       'docker:build': `docker build -t ${lowercaseRegistryTag} .`,
-      'docker:build:pr': `docker build -t ${lowercaseRegistryTag.replace(':latest', '')}:pr-$(git rev-parse --short HEAD) .`,
-      'deploy:prod': 'npm run docker:build && docker push && curl -X POST $COOLIFY_WEBHOOK_URL',
-      'deploy:dev': 'npm run docker:build && docker push && curl -X POST $COOLIFY_DEV_WEBHOOK_URL',
-      'deploy:pr': 'npm run docker:build:pr && docker push && echo "PR deployment complete"'
+      'docker:run': `docker run -p 3000:3000 ${lowercaseRegistryTag}`,
+      'services:start': 'docker-compose -f docker-compose.dev.yml up -d',
+      'services:stop': 'docker-compose -f docker-compose.dev.yml down',
+      'services:logs': 'docker-compose -f docker-compose.dev.yml logs -f',
+      'dev:setup': 'npm run services:start && echo "🚀 Local services started! Run npm run dev to start development server"',
+      'dev:teardown': 'npm run services:stop',
+      'dev:full': 'npm run services:start && npm run dev'
     };
+
+    // Add Coolify deployment scripts if configured
+    if (options.useCoolify && options.coolifyUrl) {
+      baseScripts['docker:build:pr'] = `docker build -t ${lowercaseRegistryTag.replace(':latest', '')}:pr-$(git rev-parse --short HEAD) .`;
+      baseScripts['deploy:prod'] = 'npm run docker:build && docker push && curl -X POST "$COOLIFY_WEBHOOK_URL"';
+      baseScripts['deploy:trigger'] = 'curl -X POST "$COOLIFY_WEBHOOK_URL"';
+      baseScripts['deploy:pr'] = 'npm run docker:build:pr && docker push && echo "PR deployment complete"';
+    }
+
+    packageJson.scripts = baseScripts;
     
     await fs.writeJson(packageJsonPath, packageJson, { spaces: 2 });
-    console.log(chalk.green('✓ Added deployment scripts to package.json'));
+    console.log(chalk.green('✓ Added local development and deployment scripts to package.json'));
   }
 }
 

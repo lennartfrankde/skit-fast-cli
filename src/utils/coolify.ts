@@ -81,6 +81,17 @@ export class CoolifyClient {
     }
   }
 
+  async getServiceWebhook(projectId: string, serviceId: string): Promise<string | null> {
+    try {
+      const response = await this.client.get(`/api/v1/projects/${projectId}/applications/${serviceId}`);
+      const webhook = response.data?.webhook_url || response.data?.auto_deploy_webhook_url;
+      return webhook || null;
+    } catch (error: any) {
+      console.error(chalk.yellow(`Warning: Could not retrieve webhook URL: ${error.response?.data?.message || error.message}`));
+      return null;
+    }
+  }
+
   async createPocketBaseService(projectId: string): Promise<CoolifyService> {
     try {
       const response = await this.client.post(`/api/v1/projects/${projectId}/applications`, {
