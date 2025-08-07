@@ -55,6 +55,12 @@ export async function createProject(): Promise<void> {
   console.log(chalk.cyan('   npx sv add drizzle                 # Add Drizzle ORM'));
   console.log(chalk.cyan('   npx sv add lucia                   # Add Lucia auth'));
   console.log(chalk.cyan('   npx sv add mdsvex                  # Add MDX support'));
+  console.log(chalk.cyan('   npx sv add tailwindcss             # Add Tailwind CSS with plugins'));
+  console.log(chalk.cyan('   npx sv add vitest                  # Add Vitest testing'));
+  
+  console.log(chalk.yellow('\n💡 To enhance Tailwind CSS:'));
+  console.log(chalk.cyan('   cd into your project directory and run "npx sv add tailwindcss"'));
+  console.log(chalk.cyan('   then select typography and forms plugins when prompted'));
   console.log(chalk.cyan('   npm run services:stop    # Stop all local services'));
   
   if (options.useTauri) {
@@ -1433,7 +1439,7 @@ async function addAdditionalDependencies(projectName: string): Promise<void> {
     }
     
     console.log(chalk.blue('Installing Tailwind CSS with sv add...'));
-    await executeCommandAsync('npx', ['sv', 'add', 'tailwindcss', '--plugins', 'typography,forms']);
+    await executeCommandAsync('npx', ['sv', 'add', 'tailwindcss']);
     console.log(chalk.green('✓ Tailwind CSS installed via sv add'));
     
     console.log(chalk.blue('Installing ESLint with sv add...'));
@@ -1445,9 +1451,10 @@ async function addAdditionalDependencies(projectName: string): Promise<void> {
     console.log(chalk.green('✓ Prettier installed via sv add'));
     
     console.log(chalk.blue('Installing Vitest for testing with sv add...'));
-    await executeCommandAsync('npx', ['sv', 'add', 'vitest', '--usage', 'unit']);
+    await executeCommandAsync('npx', ['sv', 'add', 'vitest']);
     console.log(chalk.green('✓ Vitest installed via sv add'));
     
+    // Remove the separate npm install step since sv add handles it
     console.log(chalk.green('✓ All SvelteKit packages installed successfully with sv add'));
     
     // Return to original directory if we changed
@@ -1474,12 +1481,12 @@ async function addAdditionalDependencies(projectName: string): Promise<void> {
       
       // Install ESLint if not already present
       const packageJson = await fs.readJson('package.json');
-      if (!packageJson.devDependencies['eslint']) {
+      if (!packageJson.devDependencies || !packageJson.devDependencies['eslint']) {
         await executeCommand('npm install -D eslint @typescript-eslint/eslint-parser @typescript-eslint/parser');
       }
       
       // Install Prettier if not already present
-      if (!packageJson.devDependencies['prettier']) {
+      if (!packageJson.devDependencies || !packageJson.devDependencies['prettier']) {
         await executeCommand('npm install -D prettier prettier-plugin-svelte');
       }
       
@@ -1495,6 +1502,7 @@ async function addAdditionalDependencies(projectName: string): Promise<void> {
       console.log(chalk.yellow('  npx sv add tailwindcss'));
       console.log(chalk.yellow('  npx sv add eslint'));
       console.log(chalk.yellow('  npx sv add prettier'));
+      console.log(chalk.yellow('  npx sv add vitest'));
     }
     
     // Return to original directory if we changed
