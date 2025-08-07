@@ -1,5 +1,6 @@
 export interface ProjectOptions {
   projectName: string;
+  createInCurrentDir?: boolean;
   useCoolify: boolean;
   coolifyUrl?: string;
   coolifyApiToken?: string;
