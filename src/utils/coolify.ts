@@ -99,8 +99,24 @@ export class CoolifyClient {
         description: description || `SvelteKit project: ${name}`
       });
       
-      console.log(chalk.green(`✓ Created Coolify project: ${name}`));
-      return response.data;
+      // Log the response to debug what we're getting back
+      console.log(chalk.gray(`Project creation response: ${JSON.stringify(response.data, null, 2)}`));
+      
+      // Handle different response structures
+      let project;
+      if (response.data.id) {
+        project = response.data;
+      } else if (response.data.data && response.data.data.id) {
+        project = response.data.data;
+      } else if (response.data.uuid) {
+        // Some Coolify versions use uuid instead of id
+        project = { ...response.data, id: response.data.uuid };
+      } else {
+        throw new Error('Project creation response does not contain a valid ID');
+      }
+      
+      console.log(chalk.green(`✓ Created Coolify project: ${name} (ID: ${project.id})`));
+      return project;
     } catch (error: any) {
       console.error(chalk.red(`Failed to create project: ${name}`));
       
