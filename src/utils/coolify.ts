@@ -69,18 +69,117 @@ export class CoolifyClient {
   }
 
   /**
-   * Get default server UUID for production environment
+   * Step 1: Get server UUID as specified in the problem statement
+   * GET /api/v1/servers to retrieve the UUID of the server
    */
-  private async getDefaultServerUuid(): Promise<string | null> {
+  private async getServerUuid(): Promise<string> {
     try {
+      console.log(chalk.blue('Fetching server UUID from /api/v1/servers...'));
       const response = await this.client.get('/api/v1/servers');
-      if (Array.isArray(response.data) && response.data.length > 0) {
-        return response.data[0].uuid || response.data[0].id;
+      
+      if (!Array.isArray(response.data) || response.data.length === 0) {
+        throw new Error('No servers found. Please ensure at least one server is configured in Coolify.');
       }
+      
+      // Get the first server's UUID (as shown in problem statement example)
+      const server = response.data[0];
+      const serverUuid = server.uuid || server.id;
+      
+      if (!serverUuid) {
+        throw new Error('Server UUID not found in server response');
+      }
+      
+      console.log(chalk.gray(`Found server: ${server.name || 'unnamed'} (${server.ip || 'no IP'}) - UUID: ${serverUuid}`));
+      return serverUuid;
+      
     } catch (error: any) {
-      console.log(chalk.yellow('Could not retrieve server information'));
+      console.error(chalk.red('Failed to retrieve server UUID'));
+      
+      if (error.response) {
+        console.error(chalk.red(`HTTP Status: ${error.response.status}`));
+        console.error(chalk.red(`Response: ${JSON.stringify(error.response.data, null, 2)}`));
+      } else {
+        console.error(chalk.red(`Error: ${error.message}`));
+      }
+      
+      console.log(chalk.yellow('\n💡 Troubleshooting for server UUID retrieval:'));
+      console.log(chalk.yellow('   1. Ensure at least one server is configured in Coolify'));
+      console.log(chalk.yellow('   2. Verify your API token has permission to read servers'));
+      console.log(chalk.yellow('   3. Check if Coolify instance is properly set up'));
+      console.log(chalk.yellow('   4. Try accessing the servers page in Coolify dashboard'));
+      
+      throw error;
     }
-    return null;
+  }
+
+  /**
+   * Step 2: Create Application using the correct endpoint as specified in problem statement
+   * POST /api/v1/applications/dockerimage with the exact payload format
+   */
+  private async createApplicationWithDockerImage(
+    projectId: string, 
+    serviceName: string, 
+    dockerImage: string, 
+    serverUuid: string
+  ): Promise<CoolifyService> {
+    try {
+      console.log(chalk.blue('Creating application using /api/v1/applications/dockerimage endpoint...'));
+      
+      // Build payload exactly as specified in the problem statement
+      const payload = {
+        name: serviceName,
+        project_uuid: projectId,
+        server_uuid: serverUuid,
+        image: dockerImage
+      };
+      
+      console.log(chalk.gray(`API Request: POST /api/v1/applications/dockerimage`));
+      console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
+      
+      const response = await this.client.post('/api/v1/applications/dockerimage', payload);
+      
+      console.log(chalk.green(`✓ Successfully created application using correct Coolify API endpoint`));
+      return response.data;
+      
+    } catch (error: any) {
+      console.error(chalk.red(`Failed to create application via /api/v1/applications/dockerimage`));
+      
+      if (error.response) {
+        const status = error.response.status;
+        const message = error.response.data?.message || 'Unknown error';
+        
+        console.error(chalk.red(`HTTP Status: ${status}`));
+        console.error(chalk.red(`Response: ${JSON.stringify(error.response.data, null, 2)}`));
+        
+        if (status === 404) {
+          console.log(chalk.yellow('\n💡 Docker image application endpoint not found (404):'));
+          console.log(chalk.yellow('   1. Verify Coolify version supports /api/v1/applications/dockerimage'));
+          console.log(chalk.yellow('   2. Check if you need to update Coolify to a newer version'));
+          console.log(chalk.yellow('   3. Verify the project UUID is correct: ' + projectId));
+          console.log(chalk.yellow('   4. Ensure your API token has application creation permissions'));
+        } else if (status === 422) {
+          console.log(chalk.yellow('\n💡 Application creation validation error (422):'));
+          console.log(chalk.yellow('   1. Check if application name "' + serviceName + '" already exists'));
+          console.log(chalk.yellow('   2. Verify Docker image is accessible: ' + dockerImage));
+          console.log(chalk.yellow('   3. Ensure server UUID is valid: ' + serverUuid));
+          console.log(chalk.yellow('   4. Check project permissions and configuration'));
+        } else if (status === 401 || status === 403) {
+          console.log(chalk.yellow('\n💡 Authentication/Authorization error:'));
+          console.log(chalk.yellow('   1. Verify API token is valid and not expired'));
+          console.log(chalk.yellow('   2. Check token has application creation permissions'));
+          console.log(chalk.yellow('   3. Ensure token can access the specified project and server'));
+        } else if (status >= 500) {
+          console.log(chalk.yellow('\n💡 Server error:'));
+          console.log(chalk.yellow('   1. Check Coolify server logs for errors'));
+          console.log(chalk.yellow('   2. Verify Coolify instance is running properly'));
+          console.log(chalk.yellow('   3. Try the request again in a few minutes'));
+        }
+      } else {
+        console.error(chalk.red(`Request error: ${error.message}`));
+      }
+      
+      throw error;
+    }
   }
 
   /**
@@ -126,17 +225,17 @@ export class CoolifyClient {
   private async createServiceWithFallback(projectId: string, serviceName: string, newFormatPayload: any, legacyFormatPayload: any): Promise<CoolifyService> {
     // Try multiple API endpoint patterns based on different Coolify versions
     // Updated endpoints based on current Coolify API structure
+    // Build payload according to problem statement specification
     const dockerImagePayload = {
       name: serviceName,
       project_uuid: projectId,
-      docker_image: newFormatPayload.image || `${legacyFormatPayload.docker_registry_image_name}:${legacyFormatPayload.docker_registry_image_tag}`,
-      ...(legacyFormatPayload.ports_exposes && { ports_exposes: legacyFormatPayload.ports_exposes }),
-      ...(legacyFormatPayload.environment_variables && { environment_variables: legacyFormatPayload.environment_variables }),
-      ...(legacyFormatPayload.description && { description: legacyFormatPayload.description })
+      image: newFormatPayload.image || `${legacyFormatPayload.docker_registry_image_name}:${legacyFormatPayload.docker_registry_image_tag}`,
+      // Include server_uuid if available (will be added by calling method)
+      ...(legacyFormatPayload.server_uuid && { server_uuid: legacyFormatPayload.server_uuid })
     };
     
     const endpointsToTry = [
-      { url: `/api/v1/applications/dockerimage`, payload: dockerImagePayload, name: 'docker image applications endpoint' },
+      { url: `/api/v1/applications/dockerimage`, payload: dockerImagePayload, name: 'docker image applications endpoint (correct API)' },
       { url: `/api/v1/applications`, payload: { ...legacyFormatPayload, project_uuid: projectId }, name: 'direct applications endpoint' },
       { url: `/api/v1/projects/${projectId}/applications`, payload: legacyFormatPayload, name: 'project applications endpoint' },
       { url: `/api/v1/services`, payload: { ...newFormatPayload, project_id: projectId }, name: 'direct services endpoint' },
@@ -401,17 +500,20 @@ export class CoolifyClient {
         throw new Error('Missing required parameters: projectId, serviceName, or dockerImage');
       }
       
-      // Check if we should use production environment format
-      const useProductionFormat = await this.detectProductionEnvironment();
+      // Step 1: Get the server_uuid (as specified in problem statement)
+      console.log(chalk.blue('Step 1: Getting server UUID...'));
+      const serverUuid = await this.getServerUuid();
+      if (!serverUuid) {
+        throw new Error('Failed to retrieve server UUID. Cannot create application without server UUID.');
+      }
+      console.log(chalk.green(`✓ Retrieved server UUID: ${serverUuid}`));
       
+      // Step 2: Create the Application using the correct endpoint (as specified in problem statement)
+      console.log(chalk.blue('Step 2: Creating Docker application...'));
       try {
-        if (useProductionFormat) {
-          return await this.createSvelteKitServiceProduction(projectId, serviceName, dockerImage);
-        } else {
-          return await this.createSvelteKitServiceDevelopment(projectId, serviceName, dockerImage);
-        }
+        return await this.createApplicationWithDockerImage(projectId, serviceName, dockerImage, serverUuid);
       } catch (primaryError: any) {
-        console.log(chalk.yellow('Primary service creation approach failed, trying fallback methods...'));
+        console.log(chalk.yellow('Primary application creation failed, trying fallback methods...'));
         
         // Try simplified payload approach
         try {
@@ -497,8 +599,7 @@ export class CoolifyClient {
     
     const { name: registryImageName, tag: registryImageTag } = this.parseDockerImage(dockerImage);
     
-    // Get environment information
-    const serverUuid = await this.getDefaultServerUuid();
+    // Get environment information (but server_uuid should be retrieved separately)
     const environment = await this.getDefaultEnvironment();
     const destinationUuid = await this.getDefaultDestinationUuid();
     
@@ -522,10 +623,6 @@ export class CoolifyClient {
     };
 
     // Only include optional UUID fields if they have valid values
-    if (serverUuid) {
-      basePayload.server_uuid = serverUuid;
-    }
-    
     if (environment) {
       basePayload.environment_name = environment.name || 'production';
       if (environment.uuid) {
