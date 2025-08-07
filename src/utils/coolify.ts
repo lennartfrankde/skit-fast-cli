@@ -352,11 +352,29 @@ export class CoolifyClient {
         console.error(chalk.red(`Response Body: ${JSON.stringify(error.response.data, null, 2)}`));
         
         if (error.response.status === 422) {
-          console.log(chalk.yellow('\n💡 This looks like a validation error. Common solutions:'));
-          console.log(chalk.yellow('   - Try a different service name (current: ' + serviceName + ')'));
-          console.log(chalk.yellow('   - Verify the Docker image is accessible: ' + dockerImage));
-          console.log(chalk.yellow('   - Check if a service with this name already exists'));
-          console.log(chalk.yellow('   - Ensure the project has proper permissions'));
+          console.log(chalk.yellow('\n💡 Validation error detected. Trying alternative approaches...'));
+          
+          // Try simplified payload approach
+          try {
+            return await this.createSvelteKitServiceWithSimplifiedPayload(projectId, serviceName, dockerImage);
+          } catch (fallbackError: any) {
+            console.log(chalk.yellow('Simplified payload also failed. Trying minimal approach...'));
+            
+            // Try minimal payload as last resort
+            try {
+              return await this.createSvelteKitServiceMinimal(projectId, serviceName, dockerImage);
+            } catch (minimalError: any) {
+              console.error(chalk.red('All service creation approaches failed.'));
+              
+              console.log(chalk.yellow('\n💡 This looks like a validation error. Common solutions:'));
+              console.log(chalk.yellow('   - Try a different service name (current: ' + serviceName + ')'));
+              console.log(chalk.yellow('   - Verify the Docker image is accessible: ' + dockerImage));
+              console.log(chalk.yellow('   - Check if a service with this name already exists'));
+              console.log(chalk.yellow('   - Ensure the project has proper permissions'));
+              
+              throw error; // Throw original error for better debugging
+            }
+          }
         } else if (error.response.status === 404) {
           console.log(chalk.yellow('\n💡 API endpoint not found. Troubleshooting:'));
           console.log(chalk.yellow('   - Verify Coolify version compatibility (try updating Coolify)'));
@@ -397,15 +415,12 @@ export class CoolifyClient {
     const environment = await this.getDefaultEnvironment();
     const destinationUuid = await this.getDefaultDestinationUuid();
     
-    const payload: DockerImagePayload = {
+    // Build payload with only valid UUID fields to avoid validation errors
+    const payload: any = {
       project_uuid: projectId,
-      server_uuid: serverUuid || '',
-      environment_name: environment?.name || 'production',
-      environment_uuid: environment?.uuid || '',
       docker_registry_image_name: registryImageName,
       docker_registry_image_tag: registryImageTag,
       ports_exposes: '3000',
-      destination_uuid: destinationUuid || '',
       name: serviceName,
       description: 'SvelteKit application service',
       domains: '',
@@ -448,6 +463,24 @@ export class CoolifyClient {
       connect_to_docker_network: true
     };
 
+    // Only include UUID fields if they have valid values (not null or empty)
+    if (serverUuid) {
+      payload.server_uuid = serverUuid;
+    }
+    
+    if (environment) {
+      payload.environment_name = environment.name || 'production';
+      if (environment.uuid) {
+        payload.environment_uuid = environment.uuid;
+      }
+    } else {
+      payload.environment_name = 'production';
+    }
+    
+    if (destinationUuid) {
+      payload.destination_uuid = destinationUuid;
+    }
+
     console.log(chalk.gray(`API Request: POST /api/v1/applications/dockerimage`));
     console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
     
@@ -479,6 +512,55 @@ export class CoolifyClient {
     const response = await this.client.post(`/api/v1/projects/${projectId}/applications/dockerimage`, payload);
     
     console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (development format)`));
+    return response.data;
+  }
+
+  /**
+   * Create SvelteKit service with simplified payload (fallback approach)
+   */
+  private async createSvelteKitServiceWithSimplifiedPayload(projectId: string, serviceName: string, dockerImage: string): Promise<CoolifyService> {
+    console.log(chalk.blue('Using simplified payload approach (fallback)'));
+    
+    const { name: registryImageName, tag: registryImageTag } = this.parseDockerImage(dockerImage);
+    
+    const payload = {
+      project_uuid: projectId,
+      name: serviceName,
+      description: 'SvelteKit application service',
+      docker_registry_image_name: registryImageName,
+      docker_registry_image_tag: registryImageTag,
+      ports_exposes: '3000',
+      environment_name: 'production',
+      instant_deploy: true
+    };
+
+    console.log(chalk.gray(`API Request: POST /api/v1/applications/dockerimage (simplified)`));
+    console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
+    
+    const response = await this.client.post('/api/v1/applications/dockerimage', payload);
+    
+    console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (simplified format)`));
+    return response.data;
+  }
+
+  /**
+   * Create SvelteKit service with minimal payload (last resort)
+   */
+  private async createSvelteKitServiceMinimal(projectId: string, serviceName: string, dockerImage: string): Promise<CoolifyService> {
+    console.log(chalk.blue('Using minimal payload approach (last resort)'));
+    
+    const payload = {
+      name: serviceName,
+      docker_image: dockerImage,
+      project_uuid: projectId
+    };
+
+    console.log(chalk.gray(`API Request: POST /api/v1/applications (minimal)`));
+    console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
+    
+    const response = await this.client.post('/api/v1/applications', payload);
+    
+    console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (minimal format)`));
     return response.data;
   }
 
