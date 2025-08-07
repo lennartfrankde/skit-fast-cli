@@ -31,26 +31,110 @@ export class CoolifyClient {
    * Helper method to create services with fallback for different API versions
    */
   private async createServiceWithFallback(projectId: string, serviceName: string, newFormatPayload: any, legacyFormatPayload: any): Promise<CoolifyService> {
-    try {
-      // Try the new API format first
-      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/services`));
-      const response = await this.client.post(`/api/v1/projects/${projectId}/services`, newFormatPayload);
-      return response.data;
-    } catch (newFormatError: any) {
-      console.log(chalk.yellow(`New format failed, trying legacy format...`));
-      
-      // Fallback to legacy format
+    // Try multiple API endpoint patterns based on different Coolify versions
+    const endpointsToTry = [
+      { url: `/api/v1/projects/${projectId}/applications`, payload: legacyFormatPayload, name: 'applications endpoint' },
+      { url: `/api/v1/projects/${projectId}/services`, payload: newFormatPayload, name: 'services endpoint' },
+      { url: `/projects/${projectId}/applications`, payload: legacyFormatPayload, name: 'projects applications' },
+      { url: `/api/v1/applications`, payload: { ...legacyFormatPayload, project_uuid: projectId }, name: 'direct applications' }
+    ];
+
+    let lastError: any = null;
+
+    for (const endpoint of endpointsToTry) {
       try {
-        console.log(chalk.gray(`Fallback API Request: POST /api/v1/projects/${projectId}/applications`));
-        const legacyResponse = await this.client.post(`/api/v1/projects/${projectId}/applications`, legacyFormatPayload);
-        return legacyResponse.data;
-      } catch (legacyError: any) {
-        console.error(chalk.red(`Both new and legacy formats failed for service: ${serviceName}`));
-        console.error(chalk.red(`New format error: ${newFormatError.response?.data?.message || newFormatError.message}`));
-        console.error(chalk.red(`Legacy format error: ${legacyError.response?.data?.message || legacyError.message}`));
-        throw legacyError;
+        console.log(chalk.gray(`API Request: POST ${endpoint.url}`));
+        const response = await this.client.post(endpoint.url, endpoint.payload);
+        console.log(chalk.green(`✓ Successfully created service using ${endpoint.name}`));
+        return response.data;
+      } catch (error: any) {
+        console.log(chalk.yellow(`${endpoint.name} failed: ${error.response?.data?.message || error.message}`));
+        lastError = error;
+        
+        // If we get a 422 (validation error), this endpoint exists but payload is wrong
+        if (error.response?.status === 422) {
+          console.log(chalk.yellow(`API endpoint exists but payload validation failed. Trying simplified payload...`));
+          
+          // Try with simplified payload
+          try {
+            const simplifiedPayload = {
+              name: serviceName,
+              docker_image: newFormatPayload.image || legacyFormatPayload.docker_image,
+              ...(projectId && { project_uuid: projectId })
+            };
+            console.log(chalk.gray(`Retry with simplified payload: POST ${endpoint.url}`));
+            const retryResponse = await this.client.post(endpoint.url, simplifiedPayload);
+            console.log(chalk.green(`✓ Successfully created service with simplified payload`));
+            return retryResponse.data;
+          } catch (retryError: any) {
+            console.log(chalk.yellow(`Simplified payload also failed: ${retryError.response?.data?.message || retryError.message}`));
+          }
+        }
       }
     }
+
+    // All endpoints failed
+    console.error(chalk.red(`All API endpoints failed for service: ${serviceName}`));
+    if (lastError) {
+      console.error(chalk.red(`Last error: ${lastError.response?.data?.message || lastError.message}`));
+      console.error(chalk.red(`HTTP Status: ${lastError.response?.status}`));
+      if (lastError.response?.data) {
+        console.error(chalk.red(`Response: ${JSON.stringify(lastError.response.data, null, 2)}`));
+      }
+    }
+    throw lastError || new Error(`Failed to create service ${serviceName}`);
+  }
+
+  /**
+   * Test Coolify API endpoints to determine the correct format
+   */
+  private async detectApiEndpoints(projectId: string): Promise<{ endpoint: string; format: 'new' | 'legacy' | 'simple' }> {
+    const endpointsToTest = [
+      { endpoint: `/api/v1/projects/${projectId}/applications`, format: 'legacy' as const },
+      { endpoint: `/api/v1/projects/${projectId}/services`, format: 'new' as const },
+      { endpoint: `/projects/${projectId}/applications`, format: 'simple' as const }
+    ];
+
+    for (const test of endpointsToTest) {
+      try {
+        // Try a simple GET request to see if the endpoint exists
+        await this.client.get(test.endpoint);
+        console.log(chalk.green(`✓ Detected working API endpoint: ${test.endpoint}`));
+        return test;
+      } catch (error: any) {
+        if (error.response?.status === 200 || error.response?.status === 404) {
+          // 404 might just mean no services exist yet, but endpoint is valid
+          return test;
+        }
+        console.log(chalk.gray(`Endpoint ${test.endpoint} not available: ${error.response?.status || error.message}`));
+      }
+    }
+
+    // Default to legacy format if detection fails
+    console.log(chalk.yellow('Could not detect API format, defaulting to legacy'));
+    return { endpoint: `/api/v1/projects/${projectId}/applications`, format: 'legacy' };
+  }
+
+  /**
+   * Validate and normalize project ID for API calls
+   */
+  private validateProjectId(project: any): string {
+    // Handle different project response formats
+    let projectId = project;
+    
+    if (typeof project === 'object') {
+      projectId = project.id || project.uuid || project.project_id;
+    }
+    
+    if (!projectId) {
+      throw new Error('Invalid project ID: could not extract ID from project data');
+    }
+    
+    // Ensure project ID is a string
+    projectId = String(projectId);
+    
+    console.log(chalk.gray(`Using project ID: ${projectId}`));
+    return projectId;
   }
 
   async testConnection(): Promise<boolean> {
@@ -102,7 +186,7 @@ export class CoolifyClient {
       // Log the response to debug what we're getting back
       console.log(chalk.gray(`Project creation response: ${JSON.stringify(response.data, null, 2)}`));
       
-      // Handle different response structures
+      // Handle different response structures and validate ID
       let project;
       if (response.data.id) {
         project = response.data;
@@ -115,7 +199,11 @@ export class CoolifyClient {
         throw new Error('Project creation response does not contain a valid ID');
       }
       
-      console.log(chalk.green(`✓ Created Coolify project: ${name} (ID: ${project.id})`));
+      // Validate the project ID
+      const projectId = this.validateProjectId(project);
+      project.id = projectId;
+      
+      console.log(chalk.green(`✓ Created Coolify project: ${name} (ID: ${projectId})`));
       return project;
     } catch (error: any) {
       console.error(chalk.red(`Failed to create project: ${name}`));
@@ -155,48 +243,32 @@ export class CoolifyClient {
     try {
       console.log(chalk.blue(`Creating SvelteKit service with image: ${dockerImage}`));
       
-      // New API format payload
+      // Simplified new format payload (more compatible)
       const newFormatPayload = {
         name: serviceName,
         description: `SvelteKit application service`,
         image: dockerImage,
         ports_exposes: '3000',
-        is_container_based_service: true,
+        type: 'docker',
         environment_variables: {
           NODE_ENV: 'production',
           PORT: '3000',
           HOST: '0.0.0.0'
-        },
-        healthcheck: {
-          enabled: true,
-          path: '/health',
-          port: '3000',
-          interval: 30,
-          timeout: 10,
-          retries: 3
-        },
-        restart_policy: 'unless-stopped'
+        }
       };
 
-      // Legacy API format payload
+      // Simplified legacy format payload (more compatible)
       const legacyFormatPayload = {
         name: serviceName,
         docker_image: dockerImage,
         ports_exposes: '3000',
-        build_pack: 'dockerfile',
+        description: `SvelteKit application service`,
+        type: 'docker',
         environment_variables: [
           { key: 'NODE_ENV', value: 'production' },
           { key: 'PORT', value: '3000' },
           { key: 'HOST', value: '0.0.0.0' }
-        ],
-        health_check_enabled: true,
-        health_check_path: '/health',
-        health_check_port: '3000',
-        health_check_interval: 30,
-        health_check_timeout: 10,
-        health_check_retries: 3,
-        auto_deploy: true,
-        auto_deploy_webhook: true
+        ]
       };
 
       const result = await this.createServiceWithFallback(projectId, serviceName, newFormatPayload, legacyFormatPayload);
@@ -210,17 +282,32 @@ export class CoolifyClient {
         console.error(chalk.red(`Response Body: ${JSON.stringify(error.response.data, null, 2)}`));
         
         if (error.response.status === 422) {
-          console.log(chalk.yellow('\n💡 This looks like a validation error. Possible issues:'));
-          console.log(chalk.yellow('   - Service name may already exist in the project'));
-          console.log(chalk.yellow('   - Docker image URL may be invalid or inaccessible'));
-          console.log(chalk.yellow('   - Required fields may be missing in the request'));
+          console.log(chalk.yellow('\n💡 This looks like a validation error. Common solutions:'));
+          console.log(chalk.yellow('   - Try a different service name (current: ' + serviceName + ')'));
+          console.log(chalk.yellow('   - Verify the Docker image is accessible: ' + dockerImage));
+          console.log(chalk.yellow('   - Check if a service with this name already exists'));
+          console.log(chalk.yellow('   - Ensure the project has proper permissions'));
         } else if (error.response.status === 404) {
-          console.log(chalk.yellow('\n💡 API endpoint not found. This might indicate:'));
-          console.log(chalk.yellow('   - Your Coolify instance may be using a different API version'));
-          console.log(chalk.yellow('   - The project ID may be incorrect'));
+          console.log(chalk.yellow('\n💡 API endpoint not found. Troubleshooting:'));
+          console.log(chalk.yellow('   - Verify Coolify version compatibility (try updating Coolify)'));
+          console.log(chalk.yellow('   - Check project ID is correct: ' + projectId));
+          console.log(chalk.yellow('   - Verify API token has service creation permissions'));
+          console.log(chalk.yellow('   - Try creating the service manually in Coolify dashboard'));
+        } else if (error.response.status === 401 || error.response.status === 403) {
+          console.log(chalk.yellow('\n💡 Authentication/Authorization error:'));
+          console.log(chalk.yellow('   - Verify your API token is valid and not expired'));
+          console.log(chalk.yellow('   - Check token has permissions to create services in this project'));
+          console.log(chalk.yellow('   - Try regenerating the API token in Coolify dashboard'));
         }
       } else {
         console.error(chalk.red(`Request error: ${error.message}`));
+        
+        if (error.message.includes('Network Error') || error.message.includes('timeout')) {
+          console.log(chalk.yellow('\n💡 Connection issue:'));
+          console.log(chalk.yellow('   - Check if Coolify instance is accessible'));
+          console.log(chalk.yellow('   - Verify URL is correct: ' + this.client.defaults.baseURL));
+          console.log(chalk.yellow('   - Check network connectivity and firewall settings'));
+        }
       }
       
       throw error;
@@ -245,29 +332,11 @@ export class CoolifyClient {
         description: 'PocketBase database service',
         image: 'ghcr.io/muchobien/pocketbase:latest',
         ports_exposes: '8090',
-        is_container_based_service: true,
+        type: 'docker',
         environment_variables: {
           POCKETBASE_DATA_DIR: '/pb_data',
           POCKETBASE_PUBLIC_DIR: '/pb_public'
-        },
-        volumes: [
-          {
-            name: 'pocketbase_data',
-            mount_path: '/pb_data',
-            host_path: null
-          },
-          {
-            name: 'pocketbase_public', 
-            mount_path: '/pb_public',
-            host_path: null
-          }
-        ],
-        healthcheck: {
-          enabled: true,
-          path: '/api/health',
-          port: '8090'
-        },
-        restart_policy: 'unless-stopped'
+        }
       };
 
       console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/services`));
@@ -532,10 +601,13 @@ export class CoolifyClient {
     try {
       console.log(chalk.blue('Setting up project infrastructure...'));
       
+      // Validate project ID first
+      const validatedProjectId = this.validateProjectId(projectId);
+      
       // Create project network for service communication (optional)
       let network = null;
       try {
-        network = await this.createProjectNetwork(projectId);
+        network = await this.createProjectNetwork(validatedProjectId);
       } catch (networkError) {
         // Network creation is optional and often handled automatically
         console.log(chalk.yellow('Continuing without custom network (Coolify will handle service communication)'));
@@ -545,13 +617,23 @@ export class CoolifyClient {
       if (options.includeSvelteKit && options.dockerImage) {
         console.log(chalk.blue('Creating SvelteKit application...'));
         try {
-          const svelteKitService = await this.createSvelteKitService(projectId, 'app', options.dockerImage);
+          const svelteKitService = await this.createSvelteKitService(validatedProjectId, 'app', options.dockerImage);
           services.push(svelteKitService);
         } catch (error: any) {
           console.error(chalk.red('Failed to create SvelteKit service. This might be due to:'));
           console.error(chalk.red('1. Invalid Docker image URL or image not accessible'));
           console.error(chalk.red('2. Service name already exists in the project'));
           console.error(chalk.red('3. Coolify API version differences'));
+          console.error(chalk.red('4. Insufficient permissions or API token issues'));
+          
+          // Don't throw immediately, provide more context
+          console.log(chalk.yellow('\n🔧 Suggested troubleshooting steps:'));
+          console.log(chalk.yellow('1. Verify the Docker image exists and is accessible: ' + options.dockerImage));
+          console.log(chalk.yellow('2. Check if a service named "app" already exists in this project'));
+          console.log(chalk.yellow('3. Try creating the service manually in Coolify dashboard first'));
+          console.log(chalk.yellow('4. Verify your API token has service creation permissions'));
+          console.log(chalk.yellow('5. Check if your Coolify instance is up to date'));
+          
           throw error;
         }
       }
@@ -560,7 +642,7 @@ export class CoolifyClient {
       if (options.includeDatabase === 'pocketbase') {
         console.log(chalk.blue('Creating PocketBase database...'));
         try {
-          const pocketbaseService = await this.createPocketBaseService(projectId);
+          const pocketbaseService = await this.createPocketBaseService(validatedProjectId);
           services.push(pocketbaseService);
         } catch (error: any) {
           console.error(chalk.red('Failed to create PocketBase service. Continuing with other services...'));
@@ -569,7 +651,7 @@ export class CoolifyClient {
       } else if (options.includeDatabase === 'mongodb') {
         console.log(chalk.blue('Creating MongoDB database...'));
         try {
-          const mongoService = await this.createMongoDBService(projectId);
+          const mongoService = await this.createMongoDBService(validatedProjectId);
           services.push(mongoService);
         } catch (error: any) {
           console.error(chalk.red('Failed to create MongoDB service. Continuing with other services...'));
@@ -581,7 +663,7 @@ export class CoolifyClient {
       if (options.includeRedis) {
         console.log(chalk.blue('Creating Redis cache...'));
         try {
-          const redisService = await this.createRedisService(projectId);
+          const redisService = await this.createRedisService(validatedProjectId);
           services.push(redisService);
         } catch (error: any) {
           console.error(chalk.red('Failed to create Redis service. Continuing with other services...'));
@@ -594,7 +676,7 @@ export class CoolifyClient {
         if (serviceType === 'litellm') {
           console.log(chalk.blue('Creating LiteLLM AI Gateway...'));
           try {
-            const litellmService = await this.createLiteLLMService(projectId);
+            const litellmService = await this.createLiteLLMService(validatedProjectId);
             services.push(litellmService);
           } catch (error: any) {
             console.error(chalk.red('Failed to create LiteLLM service. Continuing with other services...'));
@@ -603,7 +685,7 @@ export class CoolifyClient {
         } else if (serviceType === 'qdrant') {
           console.log(chalk.blue('Creating Qdrant vector database...'));
           try {
-            const qdrantService = await this.createQdrantService(projectId);
+            const qdrantService = await this.createQdrantService(validatedProjectId);
             services.push(qdrantService);
           } catch (error: any) {
             console.error(chalk.red('Failed to create Qdrant service. Continuing with other services...'));
@@ -616,7 +698,7 @@ export class CoolifyClient {
       if (services.length > 0) {
         const serviceIds = services.map(s => s.id).filter(id => id); // Filter out any undefined IDs
         if (serviceIds.length > 0) {
-          await this.linkServicesToNetwork(projectId, serviceIds);
+          await this.linkServicesToNetwork(validatedProjectId, serviceIds);
         }
       }
       
@@ -637,6 +719,7 @@ export class CoolifyClient {
       console.log(chalk.yellow('2. Check that your API token has sufficient permissions'));
       console.log(chalk.yellow('3. Ensure the project was created successfully before adding services'));
       console.log(chalk.yellow('4. Try creating services manually in the Coolify dashboard'));
+      console.log(chalk.yellow('5. Check the Coolify logs for additional error details'));
       
       if (services.length > 0) {
         console.log(chalk.green(`\nNote: ${services.length} services were created successfully before the error.`));
