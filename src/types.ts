@@ -36,13 +36,13 @@ export interface ServiceTemplate {
 
 export interface DockerImagePayload {
   project_uuid: string;
-  server_uuid?: string;
+  server_uuid?: string; // Optional - only included if available
   environment_name?: string;
-  environment_uuid?: string;
+  environment_uuid?: string; // Optional - only included if available
   docker_registry_image_name: string;
   docker_registry_image_tag: string;
   ports_exposes: string;
-  destination_uuid?: string;
+  destination_uuid?: string; // Optional - only included if available
   name: string;
   description?: string;
   domains?: string;

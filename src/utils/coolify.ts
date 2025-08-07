@@ -352,11 +352,29 @@ export class CoolifyClient {
         console.error(chalk.red(`Response Body: ${JSON.stringify(error.response.data, null, 2)}`));
         
         if (error.response.status === 422) {
-          console.log(chalk.yellow('\n💡 This looks like a validation error. Common solutions:'));
-          console.log(chalk.yellow('   - Try a different service name (current: ' + serviceName + ')'));
-          console.log(chalk.yellow('   - Verify the Docker image is accessible: ' + dockerImage));
-          console.log(chalk.yellow('   - Check if a service with this name already exists'));
-          console.log(chalk.yellow('   - Ensure the project has proper permissions'));
+          console.log(chalk.yellow('\n💡 Validation error detected. Trying alternative approaches...'));
+          
+          // Try simplified payload approach
+          try {
+            return await this.createSvelteKitServiceWithSimplifiedPayload(projectId, serviceName, dockerImage);
+          } catch (fallbackError: any) {
+            console.log(chalk.yellow('Simplified payload also failed. Trying minimal approach...'));
+            
+            // Try minimal payload as last resort
+            try {
+              return await this.createSvelteKitServiceMinimal(projectId, serviceName, dockerImage);
+            } catch (minimalError: any) {
+              console.error(chalk.red('All service creation approaches failed.'));
+              
+              console.log(chalk.yellow('\n💡 This looks like a validation error. Common solutions:'));
+              console.log(chalk.yellow('   - Try a different service name (current: ' + serviceName + ')'));
+              console.log(chalk.yellow('   - Verify the Docker image is accessible: ' + dockerImage));
+              console.log(chalk.yellow('   - Check if a service with this name already exists'));
+              console.log(chalk.yellow('   - Ensure the project has proper permissions'));
+              
+              throw error; // Throw original error for better debugging
+            }
+          }
         } else if (error.response.status === 404) {
           console.log(chalk.yellow('\n💡 API endpoint not found. Troubleshooting:'));
           console.log(chalk.yellow('   - Verify Coolify version compatibility (try updating Coolify)'));
@@ -385,75 +403,53 @@ export class CoolifyClient {
   }
 
   /**
-   * Create SvelteKit service using production environment format (base route)
+   * Create SvelteKit service using the correct Coolify API endpoint
    */
   private async createSvelteKitServiceProduction(projectId: string, serviceName: string, dockerImage: string): Promise<CoolifyService> {
-    console.log(chalk.blue('Using production environment format'));
+    console.log(chalk.blue('Creating Docker application using official Coolify API'));
     
     const { name: registryImageName, tag: registryImageTag } = this.parseDockerImage(dockerImage);
     
-    // Get environment information for production setup
+    // Get environment information
     const serverUuid = await this.getDefaultServerUuid();
     const environment = await this.getDefaultEnvironment();
     const destinationUuid = await this.getDefaultDestinationUuid();
     
+    // Build payload according to official Coolify API documentation
     const payload: DockerImagePayload = {
       project_uuid: projectId,
-      server_uuid: serverUuid || '',
-      environment_name: environment?.name || 'production',
-      environment_uuid: environment?.uuid || '',
       docker_registry_image_name: registryImageName,
       docker_registry_image_tag: registryImageTag,
       ports_exposes: '3000',
-      destination_uuid: destinationUuid || '',
       name: serviceName,
       description: 'SvelteKit application service',
-      domains: '',
-      ports_mappings: '',
-      health_check_enabled: true,
-      health_check_path: '/',
-      health_check_port: '3000',
-      health_check_host: '0.0.0.0',
-      health_check_method: 'GET',
-      health_check_return_code: 200,
-      health_check_scheme: 'http',
-      health_check_response_text: '',
-      health_check_interval: 30,
-      health_check_timeout: 10,
-      health_check_retries: 3,
-      health_check_start_period: 30,
-      limits_memory: '',
-      limits_memory_swap: '',
-      limits_memory_swappiness: 0,
-      limits_memory_reservation: '',
-      limits_cpus: '',
-      limits_cpuset: '',
-      limits_cpu_shares: 0,
-      custom_labels: '',
-      custom_docker_run_options: '',
-      post_deployment_command: '',
-      post_deployment_command_container: '',
-      pre_deployment_command: '',
-      pre_deployment_command_container: '',
-      manual_webhook_secret_github: '',
-      manual_webhook_secret_gitlab: '',
-      manual_webhook_secret_bitbucket: '',
-      manual_webhook_secret_gitea: '',
-      redirect: '',
-      instant_deploy: true,
-      use_build_server: true,
-      is_http_basic_auth_enabled: false,
-      http_basic_auth_username: '',
-      http_basic_auth_password: '',
-      connect_to_docker_network: true
+      instant_deploy: true
     };
 
-    console.log(chalk.gray(`API Request: POST /api/v1/applications/dockerimage`));
+    // Only include optional UUID fields if they have valid values
+    if (serverUuid) {
+      payload.server_uuid = serverUuid;
+    }
+    
+    if (environment) {
+      payload.environment_name = environment.name || 'production';
+      if (environment.uuid) {
+        payload.environment_uuid = environment.uuid;
+      }
+    }
+    
+    if (destinationUuid) {
+      payload.destination_uuid = destinationUuid;
+    }
+
+    // Use the correct API endpoint according to official documentation
+    const endpoint = `/api/v1/projects/${projectId}/applications`;
+    console.log(chalk.gray(`API Request: POST ${endpoint}`));
     console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
     
-    const response = await this.client.post('/api/v1/applications/dockerimage', payload);
+    const response = await this.client.post(endpoint, payload);
     
-    console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (production format)`));
+    console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName}`));
     return response.data;
   }
 
@@ -475,10 +471,59 @@ export class CoolifyClient {
       ]
     };
 
-    console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications/dockerimage`));
-    const response = await this.client.post(`/api/v1/projects/${projectId}/applications/dockerimage`, payload);
+    console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications`));
+    const response = await this.client.post(`/api/v1/projects/${projectId}/applications`, payload);
     
     console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (development format)`));
+    return response.data;
+  }
+
+  /**
+   * Create SvelteKit service with simplified payload (fallback approach)
+   */
+  private async createSvelteKitServiceWithSimplifiedPayload(projectId: string, serviceName: string, dockerImage: string): Promise<CoolifyService> {
+    console.log(chalk.blue('Using simplified payload approach (fallback)'));
+    
+    const { name: registryImageName, tag: registryImageTag } = this.parseDockerImage(dockerImage);
+    
+    const payload = {
+      project_uuid: projectId,
+      name: serviceName,
+      description: 'SvelteKit application service',
+      docker_registry_image_name: registryImageName,
+      docker_registry_image_tag: registryImageTag,
+      ports_exposes: '3000',
+      environment_name: 'production',
+      instant_deploy: true
+    };
+
+    console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications (simplified)`));
+    console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
+    
+    const response = await this.client.post(`/api/v1/projects/${projectId}/applications`, payload);
+    
+    console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (simplified format)`));
+    return response.data;
+  }
+
+  /**
+   * Create SvelteKit service with minimal payload (last resort)
+   */
+  private async createSvelteKitServiceMinimal(projectId: string, serviceName: string, dockerImage: string): Promise<CoolifyService> {
+    console.log(chalk.blue('Using minimal payload approach (last resort)'));
+    
+    const payload = {
+      name: serviceName,
+      docker_image: dockerImage,
+      project_uuid: projectId
+    };
+
+    console.log(chalk.gray(`API Request: POST /api/v1/applications (minimal)`));
+    console.log(chalk.gray(`Payload: ${JSON.stringify(payload, null, 2)}`));
+    
+    const response = await this.client.post('/api/v1/applications', payload);
+    
+    console.log(chalk.green(`✓ Created SvelteKit application service: ${serviceName} (minimal format)`));
     return response.data;
   }
 
