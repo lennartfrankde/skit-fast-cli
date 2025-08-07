@@ -12,11 +12,15 @@ A comprehensive CLI tool that creates SvelteKit projects with modern tooling and
 - **TypeScript Support**: Full TypeScript implementation with proper type definitions
 - **Modern Tooling**: Automatic selection of ESLint, Prettier, and Tailwind CSS
 
-### ✅ Coolify Integration
+### ✅ Coolify Integration - FIXED Application Creation
 - **API Client**: Full Coolify API integration with authentication
 - **Project Creation**: Automatic project and service setup
+- **Application Creation**: **FIXED** - Now follows correct two-step process:
+  - **Step 1**: Get server_uuid via `GET /api/v1/servers`
+  - **Step 2**: Create application via `POST /api/v1/applications/dockerimage`
+  - **Payload**: Matches exact specification with `name`, `project_uuid`, `server_uuid`, `image`
 - **Service Management**: Support for multiple service types:
-  - SvelteKit application (Docker image)
+  - SvelteKit application (Docker image) - **FIXED IMPLEMENTATION**
   - PocketBase (pre-built app)
   - Redis cache
   - LiteLLM (AI gateway)
@@ -147,6 +151,60 @@ skit-fast create
 ✅ **Docker Configuration**: Production-ready containerization  
 ✅ **GitHub Actions**: Deployment workflows for prod/dev  
 ✅ **Deployment Scripts**: npm scripts for automated deployment
+
+## Application Creation Fix - December 2024
+
+### Problem Statement Resolution
+The application creation implementation has been fixed to follow the exact two-step process specified:
+
+#### Step 1: Get the server_uuid
+```bash
+curl -s -X GET https://coolify.serverfrank.de/api/v1/servers \
+  -H "Authorization: Bearer YOUR_BEARER_TOKEN_HERE"
+```
+**Response Example:**
+```json
+[
+  {
+    "uuid": "abcd1234-5678-90ef-ghij-klmnopqrstuv",
+    "name": "production-server", 
+    "ip": "192.168.1.100"
+  }
+]
+```
+
+#### Step 2: Create the Application
+```bash
+curl -X POST https://coolify.serverfrank.de/api/v1/applications/dockerimage \
+  -H "Authorization: Bearer YOUR_BEARER_TOKEN_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "app",
+    "project_uuid": "YOUR_PROJECT_UUID",
+    "server_uuid": "YOUR_SERVER_UUID", 
+    "image": "registry.serverfrank.de/taskdown:latest"
+  }'
+```
+
+### Implementation Details
+
+#### New Methods Added:
+1. **`getServerUuid()`** - Implements Step 1 with proper error handling
+2. **`createApplicationWithDockerImage()`** - Implements Step 2 with exact payload format
+3. **Updated `createSvelteKitService()`** - Now follows the two-step process
+
+#### Key Changes:
+- **Endpoint Priority**: `/api/v1/applications/dockerimage` is now the primary endpoint
+- **Payload Structure**: Matches exact specification (`name`, `project_uuid`, `server_uuid`, `image`)
+- **Error Handling**: Comprehensive troubleshooting for each step
+- **Fallback Support**: Maintains compatibility with older Coolify versions
+
+#### Validation:
+✅ **Step 1**: Server UUID retrieval with proper error handling  
+✅ **Step 2**: Application creation with correct endpoint and payload  
+✅ **Fallback**: Legacy endpoint support for compatibility  
+✅ **Error Handling**: Specific guidance for common issues  
+✅ **Testing**: Validated with mock implementation test  
 
 ## Next Steps
 
