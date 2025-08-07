@@ -50,6 +50,19 @@ export async function createProject(): Promise<void> {
   console.log(chalk.cyan('   npm run dev              # Start SvelteKit dev server'));
   console.log(chalk.cyan('   npm run services:stop    # Stop all local services'));
   
+  console.log(chalk.blue('\n📦 Add more SvelteKit packages anytime:'));
+  console.log(chalk.cyan('   npx sv add @sveltejs/adapter-node  # Change adapter'));
+  console.log(chalk.cyan('   npx sv add drizzle                 # Add Drizzle ORM'));
+  console.log(chalk.cyan('   npx sv add lucia                   # Add Lucia auth'));
+  console.log(chalk.cyan('   npx sv add mdsvex                  # Add MDX support'));
+  console.log(chalk.cyan('   npx sv add tailwindcss             # Add Tailwind CSS with plugins'));
+  console.log(chalk.cyan('   npx sv add vitest                  # Add Vitest testing'));
+  
+  console.log(chalk.yellow('\n💡 To enhance Tailwind CSS:'));
+  console.log(chalk.cyan('   cd into your project directory and run "npx sv add tailwindcss"'));
+  console.log(chalk.cyan('   then select typography and forms plugins when prompted'));
+  console.log(chalk.cyan('   npm run services:stop    # Stop all local services'));
+  
   if (options.useTauri) {
     const nextStep = options.createInCurrentDir ? '3' : '4';
     console.log(chalk.cyan(`  ${nextStep}. npm run tauri dev # to run the desktop app`));
@@ -113,7 +126,18 @@ async function getProjectOptions(): Promise<ProjectOptions> {
         }
       },
       {
-        type: 'password',
+        type: 'confirm',
+        name: 'showTokenInConsole',
+        message: 'Do you want to show the API token in the console for easier pasting?',
+        default: true
+      }
+    ]);
+    
+    // Show token input based on user preference
+    const tokenInputType = coolifyAnswers.showTokenInConsole ? 'input' : 'password';
+    const tokenPrompt = await inquirer.prompt([
+      {
+        type: tokenInputType,
         name: 'coolifyApiToken',
         message: 'Coolify API Token:',
         validate: (input: string) => {
@@ -122,7 +146,11 @@ async function getProjectOptions(): Promise<ProjectOptions> {
           }
           return true;
         }
-      },
+      }
+    ]);
+    
+    // Get docker registry separately
+    const registryPrompt = await inquirer.prompt([
       {
         type: 'input',
         name: 'dockerRegistry',
@@ -130,6 +158,15 @@ async function getProjectOptions(): Promise<ProjectOptions> {
         default: 'ghcr.io'
       }
     ]);
+    
+    // Merge token input with coolify answers
+    coolifyAnswers.coolifyApiToken = tokenPrompt.coolifyApiToken;
+    coolifyAnswers.dockerRegistry = registryPrompt.dockerRegistry;
+    
+    if (coolifyAnswers.showTokenInConsole && tokenPrompt.coolifyApiToken) {
+      console.log(chalk.cyan('\n📋 Your API token (for reference): ') + chalk.yellow(tokenPrompt.coolifyApiToken));
+      console.log(chalk.gray('   This token will be saved to your .env file\n'));
+    }
     
     if (coolifyAnswers.dockerRegistry) {
       const registryAnswer = await inquirer.prompt([
@@ -1390,48 +1427,35 @@ jobs:
 }
 
 async function addAdditionalDependencies(projectName: string): Promise<void> {
-  console.log(chalk.blue('Adding additional dependencies...'));
+  console.log(chalk.blue('Adding SvelteKit packages with sv add...'));
   
   const projectPath = projectName === '.' ? process.cwd() : path.join(process.cwd(), projectName);
   
   try {
-    // Install ESLint, Prettier, and Tailwind CSS
-    console.log(chalk.blue('Installing ESLint, Prettier, and Tailwind CSS...'));
-    
     // Change to project directory
     const originalCwd = process.cwd();
     if (projectName !== '.') {
       process.chdir(projectPath);
     }
     
-    // Install Tailwind CSS and PostCSS
-    await executeCommand('npm install -D tailwindcss postcss autoprefixer @tailwindcss/typography');
+    console.log(chalk.blue('Installing Tailwind CSS with sv add...'));
+    await executeCommandAsync('npx', ['sv', 'add', 'tailwindcss']);
+    console.log(chalk.green('✓ Tailwind CSS installed via sv add'));
     
-    // Initialize Tailwind CSS config
-    try {
-      await executeCommand('npx tailwindcss init -p');
-    } catch (error) {
-      // If init fails, create config manually
-      await configureTailwindCSS();
-    }
+    console.log(chalk.blue('Installing ESLint with sv add...'));
+    await executeCommandAsync('npx', ['sv', 'add', 'eslint']);
+    console.log(chalk.green('✓ ESLint installed via sv add'));
     
-    // Install ESLint if not already present
-    const packageJson = await fs.readJson('package.json');
-    if (!packageJson.devDependencies['eslint']) {
-      await executeCommand('npm install -D eslint @typescript-eslint/eslint-parser @typescript-eslint/parser');
-    }
+    console.log(chalk.blue('Installing Prettier with sv add...'));
+    await executeCommandAsync('npx', ['sv', 'add', 'prettier']);
+    console.log(chalk.green('✓ Prettier installed via sv add'));
     
-    // Install Prettier if not already present
-    if (!packageJson.devDependencies['prettier']) {
-      await executeCommand('npm install -D prettier prettier-plugin-svelte');
-    }
+    console.log(chalk.blue('Installing Vitest for testing with sv add...'));
+    await executeCommandAsync('npx', ['sv', 'add', 'vitest']);
+    console.log(chalk.green('✓ Vitest installed via sv add'));
     
-    // Configure Tailwind CSS if not already done
-    if (!await fs.pathExists('tailwind.config.js')) {
-      await configureTailwindCSS();
-    }
-    
-    console.log(chalk.green('✓ Additional dependencies installed successfully'));
+    // Remove the separate npm install step since sv add handles it
+    console.log(chalk.green('✓ All SvelteKit packages installed successfully with sv add'));
     
     // Return to original directory if we changed
     if (projectName !== '.') {
@@ -1439,10 +1463,47 @@ async function addAdditionalDependencies(projectName: string): Promise<void> {
     }
     
   } catch (error: any) {
-    console.error(chalk.red('Failed to add additional dependencies:'), error.message);
-    console.log(chalk.yellow('You can add these manually later:'));
-    console.log(chalk.yellow('  npm install -D tailwindcss postcss autoprefixer'));
-    console.log(chalk.yellow('  npx tailwindcss init -p'));
+    console.error(chalk.red('Failed to add packages with sv add:'), error.message);
+    console.log(chalk.yellow('Falling back to manual installation...'));
+    
+    // Fallback to manual installation
+    try {
+      // Install Tailwind CSS and PostCSS
+      await executeCommand('npm install -D tailwindcss postcss autoprefixer @tailwindcss/typography @tailwindcss/forms');
+      
+      // Initialize Tailwind CSS config
+      try {
+        await executeCommand('npx tailwindcss init -p');
+      } catch (error) {
+        // If init fails, create config manually
+        await configureTailwindCSS();
+      }
+      
+      // Install ESLint if not already present
+      const packageJson = await fs.readJson('package.json');
+      if (!packageJson.devDependencies || !packageJson.devDependencies['eslint']) {
+        await executeCommand('npm install -D eslint @typescript-eslint/eslint-parser @typescript-eslint/parser');
+      }
+      
+      // Install Prettier if not already present
+      if (!packageJson.devDependencies || !packageJson.devDependencies['prettier']) {
+        await executeCommand('npm install -D prettier prettier-plugin-svelte');
+      }
+      
+      // Configure Tailwind CSS if not already done
+      if (!await fs.pathExists('tailwind.config.js')) {
+        await configureTailwindCSS();
+      }
+      
+      console.log(chalk.green('✓ Packages installed manually as fallback'));
+    } catch (fallbackError: any) {
+      console.error(chalk.red('Manual installation also failed:'), fallbackError.message);
+      console.log(chalk.yellow('You can add these manually later:'));
+      console.log(chalk.yellow('  npx sv add tailwindcss'));
+      console.log(chalk.yellow('  npx sv add eslint'));
+      console.log(chalk.yellow('  npx sv add prettier'));
+      console.log(chalk.yellow('  npx sv add vitest'));
+    }
     
     // Return to original directory if we changed
     if (projectName !== '.') {
