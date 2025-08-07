@@ -450,13 +450,12 @@ export class CoolifyClient {
       const payload = {
         name: 'qdrant',
         description: 'Qdrant vector database service',
-        image: 'qdrant/qdrant:latest',
+        docker_image: 'qdrant/qdrant:latest',
         ports_exposes: '6333',
-        is_container_based_service: true,
-        environment_variables: {
-          QDRANT__SERVICE__HTTP_PORT: '6333',
-          QDRANT__SERVICE__GRPC_PORT: '6334'
-        },
+        environment_variables: [
+          { key: 'QDRANT__SERVICE__HTTP_PORT', value: '6333' },
+          { key: 'QDRANT__SERVICE__GRPC_PORT', value: '6334' }
+        ],
         volumes: [
           {
             name: 'qdrant_storage',
@@ -467,8 +466,8 @@ export class CoolifyClient {
         restart_policy: 'unless-stopped'
       };
 
-      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/services`));
-      const response = await this.client.post(`/api/v1/projects/${projectId}/services`, payload);
+      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/applications/dockerimage`));
+      const response = await this.client.post(`/api/v1/projects/${projectId}/applications/dockerimage`, payload);
       
       console.log(chalk.green(`✓ Created Qdrant vector database service`));
       return response.data;
@@ -491,14 +490,13 @@ export class CoolifyClient {
       const payload = {
         name: 'mongodb',
         description: 'MongoDB database service',
-        image: 'mongo:latest',
+        docker_image: 'mongo:latest',
         ports_exposes: '27017',
-        is_container_based_service: true,
-        environment_variables: {
-          MONGO_INITDB_ROOT_USERNAME: 'admin',
-          MONGO_INITDB_ROOT_PASSWORD: 'admin123',
-          MONGO_INITDB_DATABASE: 'app'
-        },
+        environment_variables: [
+          { key: 'MONGO_INITDB_ROOT_USERNAME', value: 'admin' },
+          { key: 'MONGO_INITDB_ROOT_PASSWORD', value: 'admin123' },
+          { key: 'MONGO_INITDB_DATABASE', value: 'app' }
+        ],
         volumes: [
           {
             name: 'mongodb_data',
@@ -509,8 +507,8 @@ export class CoolifyClient {
         restart_policy: 'unless-stopped'
       };
 
-      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/services`));
-      const response = await this.client.post(`/api/v1/projects/${projectId}/services`, payload);
+      console.log(chalk.gray(`API Request: POST /api/v1/projects/${projectId}/databases/mongodb`));
+      const response = await this.client.post(`/api/v1/projects/${projectId}/databases/mongodb`, payload);
       
       console.log(chalk.green(`✓ Created MongoDB service`));
       return response.data;
